@@ -5,7 +5,7 @@
 ### Gradivo
 - https://nidaqmx-python.readthedocs.io/en/stable/
 - https://www.pythonguis.com/pyqt5-tutorial/
-- 
+
 ### TODO
 - analog in -> graf
 - računanje
