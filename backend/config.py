@@ -1,16 +1,43 @@
-import nidaqmx
-from nidaqmx.constants import AcquisitionType
+# backend/config.py
 
-def create_ai_task(channels, sample_rate, samples_per_channel):
-    task = nidaqmx.Task()
-    
-    for ch in channels:
-        task.ai_channels.add_ai_voltage_chan(ch)
-    
-    task.timing.cfg_samp_clk_timing(
-        rate=sample_rate,
-        sample_mode=AcquisitionType.CONTINUOUS,
-        samps_per_chan=samples_per_channel
-    )
-    
-    return task
+# -----------------------------
+# Device and Channel Settings
+# -----------------------------
+
+# List of analog input channels to use (DAQ device name / channel number)
+# Example: ['Dev1/ai0', 'Dev1/ai1'] for two channels
+CHANNELS = ['Dev1/ai0', 'Dev1/ai1']
+
+# Analog input voltage range for all channels (tuple: min, max)
+VOLTAGE_RANGE = (-10.0, 10.0)
+
+# -----------------------------
+# Sampling Settings
+# -----------------------------
+
+# Sampling rate in Hz
+SAMPLE_RATE = 10000  # 10 kHz default
+
+# Number of samples per channel in DAQ internal buffer
+# Should be larger than the chunk you want to read each time
+SAMPLES_PER_CHANNEL = 5000
+
+# -----------------------------
+# Trigger Settings (optional)
+# -----------------------------
+
+# Software trigger threshold in volts
+TRIGGER_THRESHOLD = 0.0
+
+# Trigger type: 'rising', 'falling', or None
+TRIGGER_TYPE = 'rising'
+
+# Pre-trigger samples (number of samples to keep before trigger)
+PRE_TRIGGER_SAMPLES = 500
+
+# -----------------------------
+# Buffer Settings
+# -----------------------------
+
+# How many samples to keep in the circular buffer per channel
+BUFFER_SIZE = 10000
