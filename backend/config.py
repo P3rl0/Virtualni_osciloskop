@@ -1,43 +1,51 @@
-# backend/config.py
+from pathlib import Path
+import yaml
 
-# -----------------------------
-# Device and Channel Settings
-# -----------------------------
+def load_yaml(file_path: Path):
+    with open(file_path, 'r') as file:
+        return yaml.safe_load(file)    
 
-# List of analog input channels to use (DAQ device name / channel number)
-# Example: ['Dev1/ai0', 'Dev1/ai1'] for two channels
-CHANNELS = ['Dev1/ai0', 'Dev1/ai1']
+def save_yaml(data: dict, file_path: Path):
+    with open(file_path, 'w') as file:
+        yaml.dump(data, file)
 
-# Analog input voltage range for all channels (tuple: min, max)
-VOLTAGE_RANGE = (-10.0, 10.0)
+def pack_settings():
+    # TODO - pack settings dict for saving
+    pass
 
-# -----------------------------
-# Sampling Settings
-# -----------------------------
+##################################################################
+#  region CONFIG CONSTANTS
 
-# Sampling rate in Hz
-SAMPLE_RATE = 10000  # 10 kHz default
-
-# Number of samples per channel in DAQ internal buffer
-# Should be larger than the chunk you want to read each time
-SAMPLES_PER_CHANNEL = 5000
-
-# -----------------------------
-# Trigger Settings (optional)
-# -----------------------------
-
-# Software trigger threshold in volts
-TRIGGER_THRESHOLD = 0.0
-
-# Trigger type: 'rising', 'falling', or None
-TRIGGER_TYPE = 'rising'
-
-# Pre-trigger samples (number of samples to keep before trigger)
-PRE_TRIGGER_SAMPLES = 500
-
-# -----------------------------
-# Buffer Settings
-# -----------------------------
-
-# How many samples to keep in the circular buffer per channel
-BUFFER_SIZE = 10000
+RING_BUFFER_SCREEN_MULTIPLIER = 4  # ring buffer size is display_samples * this multiplier
+NIDAQMX_BUFFER_MULTIPLIER = 20  # nidaqmx buffer size is buff_transfer * this multiplier
+NUM_HORIZONTAL_DIVS = 12
+NUM_VERTICAL_DIVS = 10
+VOLTS_PER_DIV = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0]  # in volts/div
+MEASURING_RANGE_THRESHOLDS = {
+    # volts_per_div : +-min/max_val
+    0.005: 0.1,
+    0.01: 0.2,
+    0.025: 0.5,
+    0.05:   1,
+    0.1:   2,
+    0.25:   5,
+    0.5:  10,
+}
+TIMEBASE_MAP = {
+    # seconds_per_div : sample_rate
+    0.0001:  1_000_000,   # 100µs/div
+    0.0002:  500_000,     # 200µs/div
+    0.0005:  200_000,     # 500µs/div
+    0.001:   100_000,     # 1ms/div
+    0.002:   50_000,      # 2ms/div
+    0.005:   20_000,      # 5ms/div
+    0.010:   10_000,      # 10ms/div
+    0.020:   5_000,       # 20ms/div
+    0.050:   2_000,       # 50ms/div
+    0.100:   1_000,       # 100ms/div
+    0.200:   500,         # 200ms/div
+    0.500:   200,         # 500ms/div
+    1.000:   100,         # 1s/div
+    5.000:   20,          # 5s/div
+}
+# endregion CONFIG CONSTANTS

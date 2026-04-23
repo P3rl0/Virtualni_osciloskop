@@ -1,0 +1,19 @@
+daq_settings:
+  timebase: 0.01
+  channels:
+    - enable: true
+      name: Dev2/ai0
+      volts_per_div: 0.1
+      range: 2
+    - enable: false
+      name: Dev2/ai1
+      volts_per_div: 0.1
+      range: 2
+    - enable: false
+      name: Dev2/ai2
+      volts_per_div: 0.1
+      range: 2
+    - enable: false
+      name: Dev2/ai3
+      volts_per_div: 0.1
+      range: 2
