@@ -1,21 +1,24 @@
+import utils.dll_fix # noqa: F401 must be imported before nidaqmx to fix DLL loading issues on Windows
 import queue
 from collections import deque
 from pathlib import Path
-import nidaqmx
 import numpy as np
-from nidaqmx.constants import AcquisitionType, TerminalConfiguration
+import nidaqmx
+from nidaqmx.constants import AcquisitionType
 from nidaqmx.errors import DaqError
 from PyQt5.QtCore import QObject, pyqtSignal
-from config import (
+from backend.config import (
+    COUPLING_MAP,
+    PROBE_ATTENUATION,
     RING_BUFFER_SCREEN_MULTIPLIER,
     NIDAQMX_BUFFER_MULTIPLIER,
     NUM_HORIZONTAL_DIVS,
+    TERMINAL_CONFIG_MAP,
     TIMEBASE_MAP,
     MEASURING_RANGE_THRESHOLDS,
     VOLTS_PER_DIV,
     load_yaml,
 )
-
 
 class DaqWorker(QObject):
     path = Path(__file__).parent
@@ -25,22 +28,21 @@ class DaqWorker(QObject):
 
     def __init__(self):
         super().__init__()
-        self.settings = load_yaml(self.path / 'config.yaml')
+        self.settings = load_yaml(self.path / 'config.yaml', area='daq')
         print(self.path)
         print(self.path / 'config.yaml')
-        self.queue = queue.Queue()        
+        self.queue = queue.Queue()
         self.task = None
-        self.timebase = self.settings['daq_settings']['timebase']
+        self.timebase = self.settings['timebase']
+        self.channels = self.settings['channels']
         self._set_sample_rate()
-        self.channels = self.settings['daq_settings']['channels']
-        
 
-    def _set_sample_rate(self):    
-        self.sample_rate = TIMEBASE_MAP[self.timebase]        
+    def _set_sample_rate(self):
+        self.sample_rate = TIMEBASE_MAP[self.timebase]
         self.display_samples = int(self.sample_rate * self.timebase * NUM_HORIZONTAL_DIVS)
-        self.buff_transfer = self.display_samples // NUM_HORIZONTAL_DIVS  # amount of samples transferred with every nidaqmx callback is the number of samples in one division
+        self.buff_transfer = min(self.display_samples // NUM_HORIZONTAL_DIVS, self.sample_rate // 10)  # amount of samples transferred with every nidaqmx callback is the number of samples in one division
         self.nidaqmx_buffer_size = self.buff_transfer * NIDAQMX_BUFFER_MULTIPLIER
-        self.ring_buffer = deque(maxlen=self.display_samples * RING_BUFFER_SCREEN_MULTIPLIER)  # data for plotting and calculating measurements
+        self.ring_buffer = [deque(maxlen=self.display_samples * RING_BUFFER_SCREEN_MULTIPLIER) for _ in range(len(self.channels))] # data for plotting and calculating measurements
 
     def start_task(self):
         # create and configure nidaqmx task
@@ -49,7 +51,13 @@ class DaqWorker(QObject):
             for channel in self.channels:
                 if not channel['enable']:
                     continue
-                self.task.ai_channels.add_ai_voltage_chan(channel['name'], min_val=channel['range']*(-1), max_val=channel['range'], terminal_config=TerminalConfiguration.NRSE)
+                self.task.ai_channels.add_ai_voltage_chan(channel['name'], min_val=channel['range']*(-1), max_val=channel['range'], terminal_config=channel['terminal_config'])
+                self.task.ai_channels[-1].ai_coupling = channel['coupling'] # type: ignore
+                self.task.ai_channels[-1].ai_probe_atten = channel['probe_attenuation'] #type: ignore
+
+            if len(self.task.ai_channels) == 0:
+                self.task = None
+                return
             self.task.timing.cfg_samp_clk_timing(
                 rate=self.sample_rate,
                 sample_mode=AcquisitionType.CONTINUOUS,
@@ -57,6 +65,7 @@ class DaqWorker(QObject):
             )
             self.task.register_every_n_samples_acquired_into_buffer_event(self.buff_transfer, self._buff_callback)
             self.task.start()
+            print (f"DAQ task started with sample rate: {self.sample_rate} S/s, buffer transfer size: {self.buff_transfer} samples, nidaqmx buffer size: {self.nidaqmx_buffer_size} samples")
         except DaqError as e:
             self.error_occurred.emit(f"NIDAQmx Error: {e}")
             print(f"NIDAQmx Error: {e}")
@@ -98,23 +107,62 @@ class DaqWorker(QObject):
         if self.channels[chan_index]['range'] != new_range:
             self.channels[chan_index]['range'] = new_range
             self.restart_task()
-     
+
+    def set_attenuation(self, attenuation_val, chan_index):
+        if chan_index < 0 or chan_index >= len(self.channels):
+            self.error_occurred.emit(f"Invalid channel index: {chan_index}")
+            return
+        if attenuation_val not in PROBE_ATTENUATION:
+            self.error_occurred.emit(f"Invalid attenuation value: {attenuation_val}")
+            return
+        self.channels[chan_index]['probe_attenuation'] = attenuation_val
+        self.restart_task()
+
+    def set_coupling(self, coupling_val, chan_index):
+        if chan_index < 0 or chan_index >= len(self.channels):
+            self.error_occurred.emit(f"Invalid channel index: {chan_index}")
+            return
+        if coupling_val not in COUPLING_MAP.keys():
+            self.error_occurred.emit(f"Invalid coupling value: {coupling_val}")
+            return
+        self.channels[chan_index]['coupling'] = COUPLING_MAP[coupling_val]
+        self.restart_task()
+
+    def set_terminal_config(self, terminal_config_val, chan_index):
+        if chan_index < 0 or chan_index >= len(self.channels):
+            self.error_occurred.emit(f"Invalid channel index: {chan_index}")
+            return
+        if terminal_config_val not in TERMINAL_CONFIG_MAP.keys():
+            self.error_occurred.emit(f"Invalid terminal config value: {terminal_config_val}")
+            return
+        self.channels[chan_index]['terminal_config'] = TERMINAL_CONFIG_MAP[terminal_config_val]
+        self.restart_task()
+
     def _buff_callback(self, task_handle, event_type, n_samples, callback_data):
         try:
-            data = self.task.read(n_samples) # type: ignore
-            self.queue.put(np.array(data))
+            data = np.atleast_2d(self.task.read(n_samples)) # type: ignore
+            self.queue.put(data)
         except DaqError as e:
             self.error_occurred.emit(f"NIDAQmx Error: {e}")
         return 0
-    
-    def poll_queue(self):
-        temp_data = []
-        while not self.queue.empty():
-            temp_data.append(self.queue.get_nowait())
-        if not temp_data:
-            return
-        temp_data = np.concatenate(temp_data)
-        self.ring_buffer.extend(temp_data)
 
-        latest_data = np.array(self.ring_buffer)[-self.display_samples:]
+    def poll_queue(self):
+        if self.queue.empty():
+            return
+
+        active_indices = [i for i, ch in enumerate(self.channels) if ch['enable']]
+        temp_data = [[] for _ in range(len(active_indices))]
+
+        while not self.queue.empty():
+            data = self.queue.get_nowait()  # shape (n_active, n_samples)
+            for active_idx in range(len(active_indices)):
+                temp_data[active_idx].append(data[active_idx])
+
+        for active_idx, phys_idx in enumerate(active_indices):
+            combined = np.concatenate(temp_data[active_idx])
+            self.ring_buffer[phys_idx].extend(combined)
+
+        latest_data = np.array([
+            np.array(self.ring_buffer[i])[-self.display_samples:] for i in range(len(self.channels))
+        ])
         self.graph_data.emit(latest_data)

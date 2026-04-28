@@ -1,19 +1,38 @@
 daq_settings:
-  timebase: 0.01
+  timebase: 1
   channels:
     - enable: true
       name: Dev2/ai0
-      volts_per_div: 0.1
-      range: 2
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
+      volts_per_div: 1
+      range: 10
     - enable: false
       name: Dev2/ai1
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
       volts_per_div: 0.1
       range: 2
     - enable: false
       name: Dev2/ai2
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
       volts_per_div: 0.1
       range: 2
     - enable: false
       name: Dev2/ai3
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
       volts_per_div: 0.1
       range: 2
+
+processor_settings:
+  trigger_type: auto
+  trigger_level: 5
+  trigger_offset: 0
+  trigger_slope: rising
+  trigger_channel: 0

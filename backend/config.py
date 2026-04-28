@@ -1,9 +1,23 @@
 from pathlib import Path
+from nidaqmx.constants import TerminalConfiguration, AcquisitionType, Coupling
 import yaml
 
-def load_yaml(file_path: Path):
+def load_yaml(file_path: Path, area: str = 'all') -> dict:
     with open(file_path, 'r') as file:
-        return yaml.safe_load(file)    
+        settings = yaml.safe_load(file)
+    # map conversions
+    for channel in settings['daq_settings']['channels']:
+        channel['terminal_config'] = TERMINAL_CONFIG_MAP[channel['terminal_config']]
+        channel['coupling'] = COUPLING_MAP[channel['coupling']]
+
+    if area == 'all':
+        return settings
+    if area == 'daq':
+        return settings['daq_settings']
+    if area == 'processing':
+        return settings['processor_settings']
+    else:   # default to all if area is not recognized
+        return settings
 
 def save_yaml(data: dict, file_path: Path):
     with open(file_path, 'w') as file:
@@ -14,8 +28,7 @@ def pack_settings():
     pass
 
 ##################################################################
-#  region CONFIG CONSTANTS
-
+#  region BACKEND CONFIG
 RING_BUFFER_SCREEN_MULTIPLIER = 4  # ring buffer size is display_samples * this multiplier
 NIDAQMX_BUFFER_MULTIPLIER = 20  # nidaqmx buffer size is buff_transfer * this multiplier
 NUM_HORIZONTAL_DIVS = 12
@@ -48,4 +61,24 @@ TIMEBASE_MAP = {
     1.000:   100,         # 1s/div
     5.000:   20,          # 5s/div
 }
-# endregion CONFIG CONSTANTS
+TERMINAL_CONFIG_MAP = {
+    'RSE': TerminalConfiguration.RSE,
+    'NRSE': TerminalConfiguration.NRSE,
+    'DIFF': TerminalConfiguration.DIFF,
+    'PSEUD_ODIFF': TerminalConfiguration.PSEUDO_DIFF
+}
+COUPLING_MAP = {
+    'DC': Coupling.DC,
+    'AC': Coupling.AC
+}
+PROBE_ATTENUATION = [1.0, 10.0]
+# endregion BACKEND CONFIG
+
+# region PROCESSING CONFIG
+TRIGGER_TYPE = ['auto', 'normal', 'single']
+TRIGG_SLOPE = ['rising', 'falling']
+# endregion PROCESSING CONFIG
+
+# region FRONTEND CONFIG
+CHANNEL_COLORS = ['#FF0000', '#00FF00', "#2A61F6", '#FFFF00']
+# endregion FRONTEND CONFIG
