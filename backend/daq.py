@@ -7,7 +7,7 @@ import nidaqmx
 from nidaqmx.constants import AcquisitionType
 from nidaqmx.errors import DaqError
 from PyQt5.QtCore import QObject, pyqtSignal
-from backend.processing import triggerProcessor
+from backend.processing import TriggerProcessor, Measurements
 from backend.config import (
     COUPLING_MAP,
     PROBE_ATTENUATION,
@@ -26,6 +26,7 @@ class DaqWorker(QObject):
     path = Path(__file__).parent
     # signal to send acquired data to the main thread for plotting
     graph_data = pyqtSignal(np.ndarray)
+    measurements_data = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
 
     def __init__(self):
@@ -38,7 +39,8 @@ class DaqWorker(QObject):
         self.timebase = self.settings["timebase"]
         self.channels = self.settings["channels"]
         self._set_sample_rate()
-        self.trigger = triggerProcessor()
+        self.trigger = TriggerProcessor()
+        self.measurements = Measurements()
 
     def _set_sample_rate(self):
         self.sample_rate = TIMEBASE_MAP[self.timebase]
@@ -65,7 +67,6 @@ class DaqWorker(QObject):
                     terminal_config=channel["terminal_config"],
                 )
                 self.task.ai_channels[-1].ai_coupling = channel["coupling"]  # type: ignore
-                self.task.ai_channels[-1].ai_probe_atten = channel["probe_attenuation"]  # type: ignore
 
             if len(self.task.ai_channels) == 0:
                 self.task = None
@@ -150,6 +151,19 @@ class DaqWorker(QObject):
         self.channels[chan_index]["terminal_config"] = TERMINAL_CONFIG_MAP[terminal_config_val]
         self.restart_task()
 
+    def set_channel_enable(self, enable: bool, chan_index: int):
+        if chan_index < 0 or chan_index >= len(self.channels):
+            self.error_occurred.emit(f"Invalid channel index: {chan_index}")
+            return
+        self.channels[chan_index]["enable"] = enable
+        self.restart_task()
+
+    def set_vertical_offset(self, offset, chan_index):
+        if chan_index < 0 or chan_index >= len(self.channels):
+            self.error_occurred.emit(f"Invalid channel index: {chan_index}")
+            return
+        self.channels[chan_index]["vertical_offset"] = offset
+
     def _buff_callback(self, task_handle, event_type, n_samples, callback_data):
         try:
             data = np.atleast_2d(self.task.read(n_samples))  # type: ignore
@@ -171,11 +185,18 @@ class DaqWorker(QObject):
                 temp_data[active_idx].append(data[active_idx])
 
         for active_idx, phys_idx in enumerate(active_indices):
-            combined = np.concatenate(temp_data[active_idx])
+            combined = np.concatenate(temp_data[active_idx]) * self.channels[phys_idx]["probe_attenuation"]
             self.ring_buffer[phys_idx].extend(combined)
-        print(self.ring_buffer[0])
+
+        channel_ranges = [ch["range"] for ch in self.channels]
         display = self.trigger.process_trigger(
-            data=self.ring_buffer, display_samples=self.display_samples, sample_rate=self.sample_rate
+            data=self.ring_buffer,
+            display_samples=self.display_samples,
+            sample_rate=self.sample_rate,
+            active_indices=active_indices,
+            channel_ranges=channel_ranges,
         )
         if display is not None:
             self.graph_data.emit(display)
+            results = self.measurements.compute(display, self.sample_rate, active_indices)
+            self.measurements_data.emit(results)

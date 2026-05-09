@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 app = QApplication(sys.argv)
 
 test = DaqWorker()
-test.stop_task()
 test.start_task()
 
 # setup plot
@@ -33,6 +32,7 @@ def on_data(display):
 
 
 test.graph_data.connect(on_data)
+test.measurements_data.connect(lambda r: print(r))
 
 
 def tick():
