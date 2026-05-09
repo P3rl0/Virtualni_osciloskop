@@ -32,7 +32,7 @@ daq_settings:
 
 processor_settings:
   trigger_type: auto
-  trigger_level: 5
+  trigger_level: 0.1
   trigger_offset: 0
   trigger_slope: rising
   trigger_channel: 0

@@ -14,25 +14,30 @@ test.start_task()
 # setup plot
 plt.ion()  # interactive mode
 fig, ax = plt.subplots()
-line, = ax.plot([], [])
+(line,) = ax.plot([], [])
 ax.set_title("DAQ Data")
 ax.set_xlabel("Samples")
 ax.set_ylabel("Voltage")
 
-def tick():
-    test.poll_queue()
-    data = np.array(test.ring_buffer)[-test.display_samples:]
-    if data.size == 0:
+
+def on_data(display):
+    if display.size == 0:
         return
-
-    line.set_xdata(np.arange(len(data)))
-    line.set_ydata(data)
-
+    channel_data = display[0]  # first active channel
+    line.set_xdata(np.arange(len(channel_data)))
+    line.set_ydata(channel_data)
     ax.relim()
     ax.autoscale_view()
-
     fig.canvas.draw()
     fig.canvas.flush_events()
+
+
+test.graph_data.connect(on_data)
+
+
+def tick():
+    test.poll_queue()
+
 
 timer = QTimer()
 timer.timeout.connect(tick)
