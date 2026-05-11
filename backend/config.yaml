@@ -70,4 +70,16 @@ processor_settings:
       rise_time: false
       fall_time: false
 
+signal_gen_settings:
+  gpib_address: 10
+  waveform: SIN
+  frequency: 1000.0       # Hz
+  amplitude: 1.0          # Vpp
+  offset: 0.0             # V
+  load: INF               # INF = High-Z, 50 = 50 Ω
+  duty_cycle: 50.0        # % — only active when waveform = SQU
+  output_enabled: false
 
+app_settings:
+  save_on_exit: true      # if true, settings are saved automatically when the app closes
+                          # if false, only the Save button saves settings
