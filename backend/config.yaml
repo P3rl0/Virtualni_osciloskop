@@ -1,0 +1,73 @@
+daq_settings:
+  timebase: 1
+  channels:
+    - enable: true
+      name: Dev2/ai0
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
+      volts_per_div: 1.0
+      vertical_offset: 0.0
+    - enable: false
+      name: Dev2/ai1
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
+      volts_per_div: 0.1
+      vertical_offset: 0.0
+    - enable: false
+      name: Dev2/ai2
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
+      volts_per_div: 0.1
+      vertical_offset: 0.0
+    - enable: false
+      name: Dev2/ai3
+      terminal_config: RSE
+      probe_attenuation: 1.0
+      coupling: DC
+      volts_per_div: 0.1
+      vertical_offset: 0.0
+
+processor_settings:
+  trigger_type: normal
+  trigger_level: 0.1
+  trigger_offset: 0
+  trigger_slope: rising
+  trigger_channel: 0
+  measurements:
+    - mean: true        # channel 0
+      rms: false
+      min: false
+      max: false
+      peak_to_peak: false
+      frequency: true
+      rise_time: false
+      fall_time: false
+    - mean: false        # channel 1
+      rms: false
+      min: false
+      max: false
+      peak_to_peak: false
+      frequency: false
+      rise_time: false
+      fall_time: false
+    - mean: false        # channel 2
+      rms: false
+      min: false
+      max: false
+      peak_to_peak: false
+      frequency: false
+      rise_time: false
+      fall_time: false
+    - mean: false        # channel 3
+      rms: false
+      min: false
+      max: false
+      peak_to_peak: false
+      frequency: false
+      rise_time: false
+      fall_time: false
+
+
