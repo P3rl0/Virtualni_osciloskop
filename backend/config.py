@@ -25,18 +25,78 @@ def load_yaml(file_path: Path, area: str = "all") -> dict:
         return settings["daq_settings"]
     if area == "processing":
         return settings["processor_settings"]
+    if area == "signal_gen":
+        return settings["signal_gen_settings"]
+    if area == "app":
+        return settings["app_settings"]
     else:  # default to all if area is not recognized
         return settings
 
 
 def save_yaml(data: dict, file_path: Path):
     with open(file_path, "w") as file:
-        yaml.dump(data, file)
+        yaml.dump(data, file, default_flow_style=False, sort_keys=False)
 
 
-def pack_settings():
-    # TODO - pack settings dict for saving
-    pass
+def pack_settings(
+    daq_settings: dict,
+    processor_settings: dict,
+    measurements: list,
+    signal_gen_settings: dict,
+    app_settings: dict,
+) -> dict:
+    """Convert live settings dicts into a YAML-serializable dict.
+
+    Reverses the enum conversions done by load_yaml (terminal_config, coupling)
+    and strips the derived 'range' field so the output can round-trip through
+    save_yaml → load_yaml without corruption.
+
+    Args:
+        daq_settings:        DaqWorker.settings
+        processor_settings:  TriggerProcessor.settings
+        measurements:        Measurements.measurements  — kept separate because
+                             TriggerProcessor and Measurements each load their own
+                             copy of processor_settings, so trigger.settings["measurements"]
+                             is never updated at runtime; the live list lives in
+                             Measurements.measurements instead.
+        signal_gen_settings: SignalGenWorker.settings
+        app_settings:        dict loaded with load_yaml(area="app")
+
+    Returns:
+        dict ready to pass directly to save_yaml()
+    """
+    inv_terminal = {v: k for k, v in TERMINAL_CONFIG_MAP.items()}
+    inv_coupling = {v: k for k, v in COUPLING_MAP.items()}
+
+    channels = []
+    for ch in daq_settings["channels"]:
+        channels.append({
+            "enable": ch["enable"],
+            "name": ch["name"],
+            "terminal_config": inv_terminal[ch["terminal_config"]],
+            "probe_attenuation": ch["probe_attenuation"],
+            "coupling": inv_coupling[ch["coupling"]],
+            "volts_per_div": ch["volts_per_div"],
+            "vertical_offset": ch["vertical_offset"],
+            # "range" is derived from volts_per_div in load_yaml — do NOT save
+        })
+
+    return {
+        "daq_settings": {
+            "timebase": daq_settings["timebase"],
+            "channels": channels,
+        },
+        "processor_settings": {
+            "trigger_type": processor_settings["trigger_type"],
+            "trigger_level": processor_settings["trigger_level"],
+            "trigger_offset": processor_settings["trigger_offset"],
+            "trigger_slope": processor_settings["trigger_slope"],
+            "trigger_channel": processor_settings["trigger_channel"],
+            "measurements": measurements,
+        },
+        "signal_gen_settings": dict(signal_gen_settings),
+        "app_settings": dict(app_settings),
+    }
 
 
 ##################################################################
@@ -104,6 +164,18 @@ TRIGGER_TYPE = ["auto", "normal", "single"]
 TRIGG_SLOPE = ["rising", "falling"]
 HYST_MULTIPLIER = 0.03
 # endregion PROCESSING CONFIG
+
+# region SIGNAL GEN CONFIG
+SIGGEN_WAVEFORMS = ["SIN", "SQU", "TRI", "RAMP"]  # 33120A standard waveforms
+SIGGEN_LOAD = ["INF", "50"]                         # High-Z = INF, 50 Ω = 50
+SIGGEN_FREQ_MIN = 100e-6                            # 100 µHz (33120A spec)
+SIGGEN_FREQ_MAX = 15e6                              # 15 MHz (33120A spec)
+SIGGEN_AMP_MIN = 0.01                               # 10 mVpp into 50 Ω
+SIGGEN_AMP_MAX = 20.0                               # 20 Vpp into Hi-Z (10 Vpp into 50 Ω)
+SIGGEN_OFFSET_MAX = 5.0                             # ± 5 V max offset
+SIGGEN_DUTY_MIN = 20.0                              # 20% duty cycle (33120A limit)
+SIGGEN_DUTY_MAX = 80.0                              # 80% duty cycle (33120A limit)
+# endregion SIGNAL GEN CONFIG
 
 # region FRONTEND CONFIG
 CHANNEL_COLORS = ["#FF0000", "#00FF00", "#2A61F6", "#FFFF00"]

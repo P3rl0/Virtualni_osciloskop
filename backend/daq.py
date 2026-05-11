@@ -99,6 +99,7 @@ class DaqWorker(QObject):
             self.error_occurred.emit(f"Invalid timebase value: {timebase_val}")
             return
         self.timebase = timebase_val
+        self.settings["timebase"] = timebase_val  # keep settings dict in sync with the live variable
         self._set_sample_rate()
         self.restart_task()
 
@@ -156,6 +157,13 @@ class DaqWorker(QObject):
             self.error_occurred.emit(f"Invalid channel index: {chan_index}")
             return
         self.channels[chan_index]["enable"] = enable
+        self.restart_task()
+
+    def set_channel_name(self, name: str, chan_index: int):
+        if chan_index < 0 or chan_index >= len(self.channels):
+            self.error_occurred.emit(f"Invalid channel index: {chan_index}")
+            return
+        self.channels[chan_index]["name"] = name
         self.restart_task()
 
     def set_vertical_offset(self, offset, chan_index):
