@@ -1,0 +1,8 @@
+PyYAML
+numpy
+PyQt5
+pyqtgraph
+nidaqmx
+pyvisa
+matplotlib
+pytest
