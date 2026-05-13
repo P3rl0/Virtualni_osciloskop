@@ -1,0 +1,182 @@
+from PyQt5.QtWidgets import (
+    QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
+    QCheckBox, QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QPushButton, QWidget,
+)
+from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt
+from backend.config import VOLTS_PER_DIV, PROBE_ATTENUATION
+
+
+def _fmt_vdiv(v):
+    if v < 1e-3:
+        return f"{v * 1e6:.0f} µV/div"
+    if v < 1.0:
+        return f"{v * 1e3:.4g} mV/div"
+    return f"{v:.4g} V/div"
+
+
+_COUPLING_OPTIONS   = ["DC", "AC"]
+_PROBE_OPTIONS      = ["1×", "10×"]
+_PROBE_VALUES       = [1.0, 10.0]
+_TERMINAL_OPTIONS   = ["RSE", "NRSE", "DIFF", "PSEUD_ODIFF"]
+
+
+class ChannelPanel(QGroupBox):
+    def __init__(self, channel_index: int, color: str, daq_worker, parent=None):
+        super().__init__(parent)
+        self._idx = channel_index
+        self._daq = daq_worker
+        self._color = color
+        self._expanded = False
+
+        self.setTitle(f"CH{channel_index + 1}")
+        self.setStyleSheet(
+            f"QGroupBox::title {{ color: {color}; font-weight: bold; }}"
+        )
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(4)
+        outer.setContentsMargins(6, 14, 6, 6)
+
+        # ── Header row ──────────────────────────────────────────────────
+        header = QHBoxLayout()
+        header.setSpacing(4)
+
+        self._enable_cb = QCheckBox("ON")
+        self._enable_cb.setStyleSheet(f"color: {color};")
+        header.addWidget(self._enable_cb)
+
+        self._vdiv_combo = QComboBox()
+        for v in VOLTS_PER_DIV:
+            self._vdiv_combo.addItem(_fmt_vdiv(v), v)
+        header.addWidget(self._vdiv_combo, stretch=1)
+
+        self._offset_spin = QDoubleSpinBox()
+        self._offset_spin.setRange(-50.0, 50.0)
+        self._offset_spin.setSingleStep(0.1)
+        self._offset_spin.setDecimals(2)
+        self._offset_spin.setSuffix(" V")
+        self._offset_spin.setFixedWidth(80)
+        header.addWidget(self._offset_spin)
+
+        self._expand_btn = QPushButton("▾")
+        self._expand_btn.setFixedWidth(22)
+        self._expand_btn.setFlat(True)
+        self._expand_btn.setToolTip("Advanced settings")
+        header.addWidget(self._expand_btn)
+
+        outer.addLayout(header)
+
+        # ── Advanced row (hidden by default) ────────────────────────────
+        self._adv_widget = QWidget()
+        adv = QGridLayout(self._adv_widget)
+        adv.setSpacing(4)
+        adv.setContentsMargins(0, 2, 0, 2)
+
+        adv.addWidget(QLabel("Coupling"), 0, 0)
+        self._coupling_combo = QComboBox()
+        self._coupling_combo.addItems(_COUPLING_OPTIONS)
+        adv.addWidget(self._coupling_combo, 0, 1)
+
+        adv.addWidget(QLabel("Probe"), 0, 2)
+        self._probe_combo = QComboBox()
+        self._probe_combo.addItems(_PROBE_OPTIONS)
+        adv.addWidget(self._probe_combo, 0, 3)
+
+        adv.addWidget(QLabel("Terminal"), 1, 0)
+        self._terminal_combo = QComboBox()
+        self._terminal_combo.addItems(_TERMINAL_OPTIONS)
+        adv.addWidget(self._terminal_combo, 1, 1)
+
+        adv.addWidget(QLabel("Name"), 1, 2)
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("Dev2/ai0")
+        adv.addWidget(self._name_edit, 1, 3)
+
+        self._adv_widget.setVisible(False)
+        outer.addWidget(self._adv_widget)
+
+        # ── Initialise from backend ──────────────────────────────────────
+        self._load_from_backend()
+
+        # ── Connect signals ──────────────────────────────────────────────
+        self._enable_cb.stateChanged.connect(self._on_enable)
+        self._vdiv_combo.currentIndexChanged.connect(self._on_vdiv)
+        self._offset_spin.valueChanged.connect(self._on_offset)
+        self._coupling_combo.currentIndexChanged.connect(self._on_coupling)
+        self._probe_combo.currentIndexChanged.connect(self._on_probe)
+        self._terminal_combo.currentIndexChanged.connect(self._on_terminal)
+        self._name_edit.editingFinished.connect(self._on_name)
+        self._expand_btn.clicked.connect(self._toggle_advanced)
+
+    # ── Init helpers ────────────────────────────────────────────────────
+
+    def _load_from_backend(self):
+        ch = self._daq.channels[self._idx]
+
+        self._block(True)
+
+        self._enable_cb.setChecked(ch["enable"])
+
+        vpd = ch["volts_per_div"]
+        idx = min(range(len(VOLTS_PER_DIV)), key=lambda i: abs(VOLTS_PER_DIV[i] - vpd))
+        self._vdiv_combo.setCurrentIndex(idx)
+
+        self._offset_spin.setValue(ch["vertical_offset"])
+
+        from nidaqmx.constants import Coupling
+        coupling_str = "DC" if ch["coupling"] == Coupling.DC else "AC"
+        self._coupling_combo.setCurrentIndex(_COUPLING_OPTIONS.index(coupling_str))
+
+        from backend.config import PROBE_ATTENUATION
+        att = ch["probe_attenuation"]
+        probe_idx = _PROBE_VALUES.index(att) if att in _PROBE_VALUES else 0
+        self._probe_combo.setCurrentIndex(probe_idx)
+
+        from nidaqmx.constants import TerminalConfiguration
+        _term_map = {
+            TerminalConfiguration.RSE:         "RSE",
+            TerminalConfiguration.NRSE:        "NRSE",
+            TerminalConfiguration.DIFF:        "DIFF",
+            TerminalConfiguration.PSEUDO_DIFF: "PSEUD_ODIFF",
+        }
+        term_str = _term_map.get(ch["terminal_config"], "RSE")
+        self._terminal_combo.setCurrentIndex(_TERMINAL_OPTIONS.index(term_str))
+
+        self._name_edit.setText(ch["name"])
+
+        self._block(False)
+
+    def _block(self, state: bool):
+        for w in (self._enable_cb, self._vdiv_combo, self._offset_spin,
+                  self._coupling_combo, self._probe_combo,
+                  self._terminal_combo, self._name_edit):
+            w.blockSignals(state)
+
+    def _toggle_advanced(self):
+        self._expanded = not self._expanded
+        self._adv_widget.setVisible(self._expanded)
+        self._expand_btn.setText("▴" if self._expanded else "▾")
+
+    # ── Slots ────────────────────────────────────────────────────────────
+
+    def _on_enable(self, state):
+        self._daq.set_channel_enable(bool(state), self._idx)
+
+    def _on_vdiv(self, index):
+        self._daq.set_volts_per_div(VOLTS_PER_DIV[index], self._idx)
+
+    def _on_offset(self, value):
+        self._daq.set_vertical_offset(value, self._idx)
+
+    def _on_coupling(self, index):
+        self._daq.set_coupling(_COUPLING_OPTIONS[index], self._idx)
+
+    def _on_probe(self, index):
+        self._daq.set_attenuation(_PROBE_VALUES[index], self._idx)
+
+    def _on_terminal(self, index):
+        self._daq.set_terminal_config(_TERMINAL_OPTIONS[index], self._idx)
+
+    def _on_name(self):
+        self._daq.set_channel_name(self._name_edit.text().strip(), self._idx)
