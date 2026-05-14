@@ -1,6 +1,6 @@
 import sys
 from backend.daq import DaqWorker
-from PyQt5.QtCore import QCoreApplication, QTimer
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QApplication
 import numpy as np
 import matplotlib.pyplot as plt

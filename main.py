@@ -8,19 +8,19 @@ from frontend.main_window import OscilloscopeWindow
 
 def _dark_palette():
     p = QPalette()
-    p.setColor(QPalette.Window,          QColor(30, 30, 40))
-    p.setColor(QPalette.WindowText,      Qt.white)
-    p.setColor(QPalette.Base,            QColor(20, 20, 28))
-    p.setColor(QPalette.AlternateBase,   QColor(35, 35, 48))
-    p.setColor(QPalette.ToolTipBase,     Qt.white)
-    p.setColor(QPalette.ToolTipText,     Qt.white)
-    p.setColor(QPalette.Text,            Qt.white)
-    p.setColor(QPalette.Button,          QColor(45, 45, 60))
-    p.setColor(QPalette.ButtonText,      Qt.white)
-    p.setColor(QPalette.BrightText,      Qt.red)
-    p.setColor(QPalette.Link,            QColor(42, 130, 218))
-    p.setColor(QPalette.Highlight,       QColor(42, 130, 218))
-    p.setColor(QPalette.HighlightedText, Qt.black)
+    p.setColor(QPalette.Window, QColor(30, 30, 40))
+    p.setColor(QPalette.WindowText, Qt.white)  # type: ignore
+    p.setColor(QPalette.Base, QColor(20, 20, 28))
+    p.setColor(QPalette.AlternateBase, QColor(35, 35, 48))
+    p.setColor(QPalette.ToolTipBase, Qt.white)  # type: ignore
+    p.setColor(QPalette.ToolTipText, Qt.white)  # type: ignore
+    p.setColor(QPalette.Text, Qt.white)  # type: ignore
+    p.setColor(QPalette.Button, QColor(45, 45, 60))
+    p.setColor(QPalette.ButtonText, Qt.white)  # type: ignore
+    p.setColor(QPalette.BrightText, Qt.red)  # type: ignore
+    p.setColor(QPalette.Link, QColor(42, 130, 218))
+    p.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    p.setColor(QPalette.HighlightedText, Qt.black)  # type: ignore
     return p
 
 

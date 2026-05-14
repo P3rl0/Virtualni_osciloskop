@@ -1,5 +1,5 @@
 from pathlib import Path
-from nidaqmx.constants import TerminalConfiguration, AcquisitionType, Coupling
+from nidaqmx.constants import TerminalConfiguration, Coupling
 import yaml
 
 
@@ -70,16 +70,18 @@ def pack_settings(
 
     channels = []
     for ch in daq_settings["channels"]:
-        channels.append({
-            "enable": ch["enable"],
-            "name": ch["name"],
-            "terminal_config": inv_terminal[ch["terminal_config"]],
-            "probe_attenuation": ch["probe_attenuation"],
-            "coupling": inv_coupling[ch["coupling"]],
-            "volts_per_div": ch["volts_per_div"],
-            "vertical_offset": ch["vertical_offset"],
-            # "range" is derived from volts_per_div in load_yaml — do NOT save
-        })
+        channels.append(
+            {
+                "enable": ch["enable"],
+                "name": ch["name"],
+                "terminal_config": inv_terminal[ch["terminal_config"]],
+                "probe_attenuation": ch["probe_attenuation"],
+                "coupling": inv_coupling[ch["coupling"]],
+                "volts_per_div": ch["volts_per_div"],
+                "vertical_offset": ch["vertical_offset"],
+                # "range" is derived from volts_per_div in load_yaml — do NOT save
+            }
+        )
 
     return {
         "daq_settings": {
@@ -169,14 +171,14 @@ HYST_MULTIPLIER = 0.03
 
 # region SIGNAL GEN CONFIG
 SIGGEN_WAVEFORMS = ["SIN", "SQU", "TRI", "RAMP"]  # 33120A standard waveforms
-SIGGEN_LOAD = ["INF", "50"]                         # High-Z = INF, 50 Ω = 50
-SIGGEN_FREQ_MIN = 100e-6                            # 100 µHz (33120A spec)
-SIGGEN_FREQ_MAX = 15e6                              # 15 MHz (33120A spec)
-SIGGEN_AMP_MIN = 0.01                               # 10 mVpp into 50 Ω
-SIGGEN_AMP_MAX = 20.0                               # 20 Vpp into Hi-Z (10 Vpp into 50 Ω)
-SIGGEN_OFFSET_MAX = 5.0                             # ± 5 V max offset
-SIGGEN_DUTY_MIN = 20.0                              # 20% duty cycle (33120A limit)
-SIGGEN_DUTY_MAX = 80.0                              # 80% duty cycle (33120A limit)
+SIGGEN_LOAD = ["INF", "50"]  # High-Z = INF, 50 Ω = 50
+SIGGEN_FREQ_MIN = 100e-6  # 100 µHz (33120A spec)
+SIGGEN_FREQ_MAX = 15e6  # 15 MHz (33120A spec)
+SIGGEN_AMP_MIN = 0.01  # 10 mVpp into 50 Ω
+SIGGEN_AMP_MAX = 20.0  # 20 Vpp into Hi-Z (10 Vpp into 50 Ω)
+SIGGEN_OFFSET_MAX = 5.0  # ± 5 V max offset
+SIGGEN_DUTY_MIN = 20.0  # 20% duty cycle (33120A limit)
+SIGGEN_DUTY_MAX = 80.0  # 80% duty cycle (33120A limit)
 # endregion SIGNAL GEN CONFIG
 
 # region FRONTEND CONFIG
