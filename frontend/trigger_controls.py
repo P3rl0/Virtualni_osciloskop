@@ -123,6 +123,11 @@ class TriggerPanel(QGroupBox):
         rising = s["trigger_slope"] == "rising"
         self._slope_btn.setChecked(not rising)
         self._slope_btn.setText("↓ Falling" if not rising else "↑ Rising")
+        # Permissive ranges while writing the backend values so they aren't
+        # silently clamped by whatever the old range was. update_scales is
+        # responsible for tightening the range afterwards.
+        self._level_spin.setRange(-1e9, 1e9)
+        self._offset_spin.setRange(-1e9, 1e9)
         self._level_spin.setValue(s["trigger_level"])
         mode_idx = TRIGGER_TYPE.index(s["trigger_type"]) if s["trigger_type"] in TRIGGER_TYPE else 0
         self._mode_combo.setCurrentIndex(mode_idx)
@@ -188,8 +193,10 @@ class TriggerPanel(QGroupBox):
         off_step   = tb * 0.01
         self._offset_spin.blockSignals(True)
         self._offset_spin.setDecimals(_decimals_for_step(off_step))
+        pre_off = self._offset_spin.value()
         self._offset_spin.setRange(-off_range, off_range)
         self._offset_spin.setSingleStep(off_step)
+        post_off = self._offset_spin.value()
         self._offset_spin.blockSignals(False)
 
         # Level: cover ±plot-height worth of volts (allowing some headroom
@@ -199,19 +206,20 @@ class TriggerPanel(QGroupBox):
         lvl_step   = vdiv * 0.01
         self._level_spin.blockSignals(True)
         self._level_spin.setDecimals(_decimals_for_step(lvl_step))
+        pre_lvl = self._level_spin.value()
         self._level_spin.setRange(-lvl_range, lvl_range)
         self._level_spin.setSingleStep(lvl_step)
+        post_lvl = self._level_spin.value()
         self._level_spin.blockSignals(False)
 
-        # The spinboxes silently clamp their value to the new range. If a
-        # channel V/div change pushed the level outside the new bounds, the
-        # backend would still hold the old (now-invisible) value. Sync.
-        cur_lvl = self._level_spin.value()
-        if cur_lvl != self._daq.trigger.settings["trigger_level"]:
-            self._daq.trigger.set_trigger_level(cur_lvl)
-        cur_off = self._offset_spin.value()
-        if cur_off != self._daq.trigger.settings["trigger_offset"]:
-            self._daq.trigger.set_trigger_offset(cur_off)
+        # Sync ONLY when setRange actually clamped the value. Don't fire
+        # on bare mismatch — that path clobbers a backend value that was
+        # legitimately set out-of-band (e.g. by autoset writing a level/
+        # offset before refresh() reloads the spinbox).
+        if pre_lvl != post_lvl:
+            self._daq.trigger.set_trigger_level(post_lvl)
+        if pre_off != post_off:
+            self._daq.trigger.set_trigger_offset(post_off)
 
     def _on_slope(self, checked):
         falling = checked

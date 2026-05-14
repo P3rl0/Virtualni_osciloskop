@@ -144,6 +144,10 @@ class ChannelPanel(QGroupBox):
         idx = min(range(len(VOLTS_PER_DIV)), key=lambda i: abs(VOLTS_PER_DIV[i] - vpd))
         self._vdiv_combo.setCurrentIndex(idx)
 
+        # Use a permissive range while writing the value so QDoubleSpinBox
+        # doesn't silently clamp (its default range is [0, 99.99] — a saved
+        # negative offset would be wiped). update_scales tightens after.
+        self._offset_spin.setRange(-1e9, 1e9)
         self._offset_spin.setValue(ch["vertical_offset"])
 
         coupling_str = "DC" if ch["coupling"] == Coupling.DC else "AC"
@@ -207,27 +211,32 @@ class ChannelPanel(QGroupBox):
     def update_scales(self):
         """Retarget the vertical-offset spinbox's range/step/decimals to match
         the channel's current V/div. Range = ±10 divisions worth of volts;
-        step = 1/100 of a division (so a single click is a tiny visible nudge)."""
+        step = 1/100 of a division (so a single click is a tiny visible nudge).
+
+        If setRange actually clamps the current spinbox value (because the
+        new tighter range no longer accommodates it), push the clamped value
+        back to the backend so the trace position matches the spinbox.
+        Crucially, do NOT sync on mere mismatch — that would clobber a
+        backend value that was legitimately set out-of-band (e.g. by autoset).
+        """
         try:
             vdiv = max(1e-9, float(self._daq.channels[self._idx]["volts_per_div"]))
         except (KeyError, IndexError):
             vdiv = 1.0
 
-        # Allow offset of ±10 divisions — enough to push the trace fully off
-        # screen in either direction (visible range is ±5 divisions).
-        off_range = vdiv * NUM_VERTICAL_DIVS  # = ±5 divs * 2 headroom
+        off_range = vdiv * NUM_VERTICAL_DIVS
         off_step  = vdiv * 0.01
+
         self._offset_spin.blockSignals(True)
         self._offset_spin.setDecimals(_decimals_for_step(off_step))
+        pre = self._offset_spin.value()
         self._offset_spin.setRange(-off_range, off_range)
         self._offset_spin.setSingleStep(off_step)
+        post = self._offset_spin.value()
         self._offset_spin.blockSignals(False)
 
-        # Clamping (if range tightened) — sync the clamped value to backend
-        # so the trace position matches what the spinbox now reads.
-        cur = self._offset_spin.value()
-        if cur != self._daq.channels[self._idx]["vertical_offset"]:
-            self._daq.set_vertical_offset(cur, self._idx)
+        if pre != post:
+            self._daq.set_vertical_offset(post, self._idx)
 
     def refresh(self):
         """Reload all widget values from the backend and retarget scales.
