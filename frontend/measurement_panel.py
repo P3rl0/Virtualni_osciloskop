@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QWidget, QGridLayout, QLabel, QCheckBox, QSizePolicy,
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtGui import QFont
 from backend.config import CHANNEL_COLORS
 
 _MEASUREMENTS = [

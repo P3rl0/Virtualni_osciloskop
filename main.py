@@ -1,3 +1,4 @@
+import utils.dll_fix  # noqa: F401  MUST be first — loads nicaiu.dll before PyQt/nidaqmx
 import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QPalette, QColor
@@ -29,4 +30,5 @@ if __name__ == "__main__":
     app.setPalette(_dark_palette())
     window = OscilloscopeWindow()
     window.show()
+    window.start_acquisition()
     sys.exit(app.exec_())

@@ -153,7 +153,9 @@ TERMINAL_CONFIG_MAP = {
     "RSE": TerminalConfiguration.RSE,
     "NRSE": TerminalConfiguration.NRSE,
     "DIFF": TerminalConfiguration.DIFF,
+    # "PSEUD_ODIFF" accepted as legacy alias on load; PSEUDO_DIFF is canonical on save.
     "PSEUD_ODIFF": TerminalConfiguration.PSEUDO_DIFF,
+    "PSEUDO_DIFF": TerminalConfiguration.PSEUDO_DIFF,
 }
 COUPLING_MAP = {"DC": Coupling.DC, "AC": Coupling.AC}
 PROBE_ATTENUATION = [1.0, 10.0]

@@ -1,10 +1,10 @@
+from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
     QCheckBox, QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QPushButton, QWidget,
 )
-from PyQt5.QtGui import QColor
-from PyQt5.QtCore import Qt
-from backend.config import VOLTS_PER_DIV, PROBE_ATTENUATION
+from nidaqmx.constants import Coupling, TerminalConfiguration
+from backend.config import VOLTS_PER_DIV
 
 
 def _fmt_vdiv(v):
@@ -18,10 +18,22 @@ def _fmt_vdiv(v):
 _COUPLING_OPTIONS   = ["DC", "AC"]
 _PROBE_OPTIONS      = ["1×", "10×"]
 _PROBE_VALUES       = [1.0, 10.0]
-_TERMINAL_OPTIONS   = ["RSE", "NRSE", "DIFF", "PSEUD_ODIFF"]
+_TERMINAL_OPTIONS   = ["RSE", "NRSE", "DIFF", "PSEUDO_DIFF"]
+_TERM_TO_STR = {
+    TerminalConfiguration.RSE:         "RSE",
+    TerminalConfiguration.NRSE:        "NRSE",
+    TerminalConfiguration.DIFF:        "DIFF",
+    TerminalConfiguration.PSEUDO_DIFF: "PSEUDO_DIFF",
+}
 
 
 class ChannelPanel(QGroupBox):
+    # Emitted whenever the user mutates something that affects the plot
+    # overlay (V/div, vertical offset, probe attenuation, enable, terminal,
+    # coupling). main_window uses this to call _refresh_overlay so the zero
+    # arrow and trigger-level line don't wait for the next frame.
+    channel_settings_changed = pyqtSignal()
+
     def __init__(self, channel_index: int, color: str, daq_worker, parent=None):
         super().__init__(parent)
         self._idx = channel_index
@@ -124,23 +136,14 @@ class ChannelPanel(QGroupBox):
 
         self._offset_spin.setValue(ch["vertical_offset"])
 
-        from nidaqmx.constants import Coupling
         coupling_str = "DC" if ch["coupling"] == Coupling.DC else "AC"
         self._coupling_combo.setCurrentIndex(_COUPLING_OPTIONS.index(coupling_str))
 
-        from backend.config import PROBE_ATTENUATION
         att = ch["probe_attenuation"]
         probe_idx = _PROBE_VALUES.index(att) if att in _PROBE_VALUES else 0
         self._probe_combo.setCurrentIndex(probe_idx)
 
-        from nidaqmx.constants import TerminalConfiguration
-        _term_map = {
-            TerminalConfiguration.RSE:         "RSE",
-            TerminalConfiguration.NRSE:        "NRSE",
-            TerminalConfiguration.DIFF:        "DIFF",
-            TerminalConfiguration.PSEUDO_DIFF: "PSEUD_ODIFF",
-        }
-        term_str = _term_map.get(ch["terminal_config"], "RSE")
+        term_str = _TERM_TO_STR.get(ch["terminal_config"], "RSE")
         self._terminal_combo.setCurrentIndex(_TERMINAL_OPTIONS.index(term_str))
 
         self._name_edit.setText(ch["name"])
@@ -162,21 +165,28 @@ class ChannelPanel(QGroupBox):
 
     def _on_enable(self, state):
         self._daq.set_channel_enable(bool(state), self._idx)
+        self.channel_settings_changed.emit()
 
     def _on_vdiv(self, index):
         self._daq.set_volts_per_div(VOLTS_PER_DIV[index], self._idx)
+        self.channel_settings_changed.emit()
 
     def _on_offset(self, value):
         self._daq.set_vertical_offset(value, self._idx)
+        self.channel_settings_changed.emit()
 
     def _on_coupling(self, index):
         self._daq.set_coupling(_COUPLING_OPTIONS[index], self._idx)
+        self.channel_settings_changed.emit()
 
     def _on_probe(self, index):
         self._daq.set_attenuation(_PROBE_VALUES[index], self._idx)
+        self.channel_settings_changed.emit()
 
     def _on_terminal(self, index):
         self._daq.set_terminal_config(_TERMINAL_OPTIONS[index], self._idx)
+        self.channel_settings_changed.emit()
 
     def _on_name(self):
         self._daq.set_channel_name(self._name_edit.text().strip(), self._idx)
+        self.channel_settings_changed.emit()

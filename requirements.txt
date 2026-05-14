@@ -1,0 +1,19 @@
+# Virtual oscilloscope — runtime dependencies
+# Python 3.13+ on Windows; nidaqmx and pyvisa require NI drivers installed.
+
+# DAQ + instrument I/O
+nidaqmx>=1.0
+PyVISA>=1.13
+
+# GUI + plotting
+PyQt5>=5.15.10
+pyqtgraph>=0.13.3
+
+# Math + data
+numpy>=1.26
+
+# Config files
+PyYAML>=6.0
+
+# Used by main_no_gui.py for the matplotlib-based smoke test
+matplotlib>=3.8

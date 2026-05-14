@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
     QComboBox, QDoubleSpinBox, QLabel, QPushButton, QSpinBox,
 )
-from backend.config import SIGGEN_WAVEFORMS, SIGGEN_LOAD, SIGGEN_FREQ_MIN, SIGGEN_FREQ_MAX
+from backend.config import SIGGEN_WAVEFORMS, SIGGEN_FREQ_MAX, SIGGEN_FREQ_MIN
 
 _UNIT_OPTIONS = ["Hz", "kHz", "MHz"]
 _UNIT_MULT    = [1.0, 1e3, 1e6]
@@ -50,13 +50,15 @@ class SignalGenPanel(QGroupBox):
         grid.addWidget(QLabel("Frequency"), 1, 0)
         self._freq_spin = QDoubleSpinBox()
         self._freq_spin.setDecimals(3)
-        self._freq_spin.setRange(0.001, 15000.0)
         self._freq_spin.setValue(1.0)
         grid.addWidget(self._freq_spin, 1, 1)
         self._freq_unit = QComboBox()
         self._freq_unit.addItems(_UNIT_OPTIONS)
         self._freq_unit.setFixedWidth(55)
         grid.addWidget(self._freq_unit, 1, 2)
+        # Spinbox range depends on the selected unit so that
+        # (value × multiplier) can never exceed hardware limits.
+        self._apply_freq_range()
 
         grid.addWidget(QLabel("Amplitude"), 2, 0)
         self._amp_spin = QDoubleSpinBox()
@@ -133,12 +135,15 @@ class SignalGenPanel(QGroupBox):
         freq_hz = s.get("frequency", 1000.0)
         if freq_hz >= 1e6:
             self._freq_unit.setCurrentIndex(2)
+            self._apply_freq_range()
             self._freq_spin.setValue(freq_hz / 1e6)
         elif freq_hz >= 1e3:
             self._freq_unit.setCurrentIndex(1)
+            self._apply_freq_range()
             self._freq_spin.setValue(freq_hz / 1e3)
         else:
             self._freq_unit.setCurrentIndex(0)
+            self._apply_freq_range()
             self._freq_spin.setValue(freq_hz)
 
         self._amp_spin.setValue(s.get("amplitude", 1.0))
@@ -197,9 +202,22 @@ class SignalGenPanel(QGroupBox):
         self._update_duty_visibility(waveform)
 
     def _on_frequency(self):
+        # The unit combo also fires this slot; reapply spin range so the
+        # max displayable value tracks the selected unit before reading.
+        self._apply_freq_range()
         mult = _UNIT_MULT[self._freq_unit.currentIndex()]
         freq_hz = self._freq_spin.value() * mult
         self._sg.set_frequency(freq_hz)
+
+    def _apply_freq_range(self):
+        """Pin the freq spinbox min/max so value × multiplier stays inside
+        [SIGGEN_FREQ_MIN, SIGGEN_FREQ_MAX]. Called when the unit changes."""
+        mult = _UNIT_MULT[self._freq_unit.currentIndex()]
+        lo = max(SIGGEN_FREQ_MIN / mult, 1e-6)
+        hi = SIGGEN_FREQ_MAX / mult
+        self._freq_spin.blockSignals(True)
+        self._freq_spin.setRange(lo, hi)
+        self._freq_spin.blockSignals(False)
 
     def _on_output(self, checked: bool):
         self._output_btn.setText("OUTPUT ON" if checked else "OUTPUT OFF")

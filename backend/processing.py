@@ -14,46 +14,75 @@ class TriggerProcessor:
     def process_trigger(self, data, display_samples, sample_rate, active_indices, channel_ranges):
         if not self.run_stop:
             return None
-
-        active_data = [np.array(data[i]) for i in active_indices]
-        if not active_data:
+        if not active_indices:
             return None
+
+        active_data = [np.asarray(data[i]) for i in active_indices]
 
         slope = self.settings["trigger_slope"]
         level = self.settings["trigger_level"]
-        pre_trigger_samples = int(display_samples // 2 + self.settings["trigger_offset"] * sample_rate)
+
+        # Clamp pre/post so a large trigger_offset can't make the slice invalid.
+        # round() (not int()) so a small offset like 1 ms at 100 Hz sample rate
+        # still nudges by one sample instead of being truncated to zero.
+        offset_samples = int(round(self.settings["trigger_offset"] * sample_rate))
+        pre_trigger_samples = display_samples // 2 + offset_samples
+        pre_trigger_samples = max(0, min(display_samples, pre_trigger_samples))
         post_trigger_samples = display_samples - pre_trigger_samples
 
         trigger_channel = self.settings["trigger_channel"]
         if trigger_channel in active_indices:
-            channel_data = active_data[active_indices.index(trigger_channel)]
+            ch_data = active_data[active_indices.index(trigger_channel)]
             hysteresis = channel_ranges[trigger_channel] * HYST_MULTIPLIER
         else:
-            channel_data = active_data[0]
+            ch_data = active_data[0]
             hysteresis = channel_ranges[active_indices[0]] * HYST_MULTIPLIER
 
+        n = len(ch_data)
         search_start = pre_trigger_samples
-        search_end = len(channel_data) - post_trigger_samples
+        search_end = n - post_trigger_samples
+
         trigg_idx = None
-        if search_end > search_start:
-            for i in range(search_end, search_start - 1, -1):
-                if slope == "rising":
-                    if channel_data[i] >= level and channel_data[i - 1] < level - hysteresis:
-                        trigg_idx = i
-                        break
-                else:
-                    if channel_data[i] <= level and channel_data[i - 1] > level + hysteresis:
-                        trigg_idx = i
-                        break
+        if search_end > search_start and n >= 2:
+            # State-machine hysteresis (standard oscilloscope trigger):
+            #   - Signal must first dip below (level - hyst) to "arm"
+            #     before a rising-edge trigger can fire (or above
+            #     level + hyst for falling).
+            #   - We scan the whole buffer to maintain state continuity
+            #     and pick the MOST RECENT trigger that falls inside the
+            #     valid display window [search_start, search_end].
+            most_recent = None
+            if slope == "rising":
+                lo = level - hysteresis
+                armed = False
+                for i in range(n):
+                    v = ch_data[i]
+                    if v < lo:
+                        armed = True
+                    elif armed and v >= level:
+                        if search_start <= i <= search_end:
+                            most_recent = i
+                        armed = False
+            else:  # falling
+                hi = level + hysteresis
+                armed = False
+                for i in range(n):
+                    v = ch_data[i]
+                    if v > hi:
+                        armed = True
+                    elif armed and v <= level:
+                        if search_start <= i <= search_end:
+                            most_recent = i
+                        armed = False
+            trigg_idx = most_recent
+
         if trigg_idx is not None:
             if self.settings["trigger_type"] == "single":
                 self.run_stop = False
-            return np.array(
-                [
-                    active_data[i][trigg_idx - pre_trigger_samples : trigg_idx + post_trigger_samples]
-                    for i in range(len(active_data))
-                ]
-            )
+            return np.array([
+                active_data[i][trigg_idx - pre_trigger_samples : trigg_idx + post_trigger_samples]
+                for i in range(len(active_data))
+            ])
         elif self.settings["trigger_type"] == "auto":
             return np.array([active_data[i][-display_samples:] for i in range(len(active_data))])
         else:

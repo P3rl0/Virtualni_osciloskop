@@ -1,11 +1,17 @@
+from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
     QComboBox, QDoubleSpinBox, QLabel, QPushButton,
 )
-from backend.config import TRIGGER_TYPE, TRIGG_SLOPE
+from backend.config import TRIGGER_TYPE
 
 
 class TriggerPanel(QGroupBox):
+    # Emitted whenever the user touches any trigger setting (level, slope,
+    # source, mode, offset). main_window uses this to flash the trigger
+    # overlay lines on the plot.
+    trigger_settings_changed = pyqtSignal()
+
     def __init__(self, daq_worker, poll_timer, parent=None):
         """
         Args:
@@ -16,7 +22,6 @@ class TriggerPanel(QGroupBox):
         self._daq = daq_worker
         self._poll_timer = poll_timer
         self._running = True
-        self._single_armed = False
 
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
@@ -52,10 +57,12 @@ class TriggerPanel(QGroupBox):
         self._mode_combo.addItems([t.capitalize() for t in TRIGGER_TYPE])
         grid.addWidget(self._mode_combo, 1, 3)
 
-        # Offset
+        # Offset — ±60 s covers slowest timebase (5 s/div × 6 divisions = 30 s
+        # either side of centre), with margin so a drag on the plot can't push
+        # the backend past a value the spinbox can still display.
         grid.addWidget(QLabel("Offset"), 2, 0)
         self._offset_spin = QDoubleSpinBox()
-        self._offset_spin.setRange(-10.0, 10.0)
+        self._offset_spin.setRange(-60.0, 60.0)
         self._offset_spin.setSingleStep(0.001)
         self._offset_spin.setDecimals(4)
         self._offset_spin.setSuffix(" s")
@@ -63,18 +70,20 @@ class TriggerPanel(QGroupBox):
 
         layout.addLayout(grid)
 
-        # Run/Stop + Single buttons
+        # Run/Stop + Single shot. Single is a separate button (not a mode)
+        # so the user can fire one capture without abandoning their current
+        # auto/normal mode preference.
         btn_row = QHBoxLayout()
-        self._runstop_btn = QPushButton("■ STOP")
+        self._runstop_btn = QPushButton("▶ RUN")
         self._runstop_btn.setCheckable(True)
         self._runstop_btn.setChecked(True)
         self._runstop_btn.setStyleSheet(
             "QPushButton:checked { background-color: #2a7a2a; color: white; font-weight: bold; }"
             "QPushButton:!checked { background-color: #7a2a2a; color: white; font-weight: bold; }"
         )
-        btn_row.addWidget(self._runstop_btn, stretch=1)
-
-        self._single_btn = QPushButton("◉ SINGLE")
+        btn_row.addWidget(self._runstop_btn, stretch=2)
+        self._single_btn = QPushButton("◉ Single")
+        self._single_btn.setToolTip("Arm one single-shot capture")
         btn_row.addWidget(self._single_btn, stretch=1)
         layout.addLayout(btn_row)
 
@@ -115,51 +124,70 @@ class TriggerPanel(QGroupBox):
 
     def _on_source(self, index):
         self._daq.trigger.set_trigger_channel(index)
+        self.trigger_settings_changed.emit()
 
     def _on_slope(self, checked):
         falling = checked
         self._slope_btn.setText("↓ Falling" if falling else "↑ Rising")
         self._daq.trigger.set_trigger_slope("falling" if falling else "rising")
+        self.trigger_settings_changed.emit()
 
     def _on_level(self, value):
         self._daq.trigger.set_trigger_level(value)
+        self.trigger_settings_changed.emit()
 
     def _on_mode(self, index):
-        self._daq.trigger.set_trigger_type(TRIGGER_TYPE[index])
+        trigger_type = TRIGGER_TYPE[index]
+        self._daq.trigger.set_trigger_type(trigger_type)
+        # Switching INTO single while running — discard stale samples
+        # so we wait for a fresh edge rather than firing on history.
+        if trigger_type == "single" and self._running:
+            self._daq.clear_buffers()
+        self.trigger_settings_changed.emit()
 
     def _on_offset(self, value):
         self._daq.trigger.set_trigger_offset(value)
+        self.trigger_settings_changed.emit()
+
+    def set_offset_external(self, offset_s):
+        """Update offset spinbox without firing _on_offset (used by plot drag)."""
+        self._offset_spin.blockSignals(True)
+        self._offset_spin.setValue(offset_s)
+        self._offset_spin.blockSignals(False)
 
     def _on_runstop(self, checked):
+        # Keep poll_timer running regardless — it drains the DAQ queue. The
+        # trigger processor's run_stop flag controls whether new frames are
+        # emitted; stopping the timer would let the queue grow unbounded.
+        if checked and self._daq.trigger.settings["trigger_type"] == "single":
+            self._daq.clear_buffers()
         self._running = checked
         self._runstop_btn.setText("▶ RUN" if checked else "■ STOP")
         self._daq.trigger.set_run_stop(checked)
-        if checked:
-            if not self._poll_timer.isActive():
-                self._poll_timer.start()
-        else:
-            self._poll_timer.stop()
+        if checked and not self._poll_timer.isActive():
+            self._poll_timer.start()
 
     def _on_single(self):
-        self._single_armed = True
-        self._daq.trigger.set_trigger_type("single")
+        """One-shot: switch to single mode, drop stale samples, arm."""
         self._mode_combo.blockSignals(True)
         self._mode_combo.setCurrentIndex(TRIGGER_TYPE.index("single"))
         self._mode_combo.blockSignals(False)
+        self._daq.trigger.set_trigger_type("single")
+        self._daq.clear_buffers()
         self._daq.trigger.set_run_stop(True)
-        if not self._poll_timer.isActive():
-            self._poll_timer.start()
         self._running = True
         self._runstop_btn.blockSignals(True)
         self._runstop_btn.setChecked(True)
         self._runstop_btn.setText("▶ RUN")
         self._runstop_btn.blockSignals(False)
+        if not self._poll_timer.isActive():
+            self._poll_timer.start()
+        self.trigger_settings_changed.emit()
 
     def on_poll_tick(self):
-        """Called every timer tick by main_window to detect single-capture completion."""
-        if self._single_armed and not self._daq.trigger.run_stop:
-            self._single_armed = False
-            self._poll_timer.stop()
+        """Detect single-capture completion — trigger processor auto-clears run_stop."""
+        if self._daq.trigger.settings["trigger_type"] == "single" \
+                and self._running and not self._daq.trigger.run_stop:
             self._running = False
             self._runstop_btn.blockSignals(True)
             self._runstop_btn.setChecked(False)

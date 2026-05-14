@@ -1,4 +1,3 @@
-import pyvisa
 from PyQt5.QtCore import QObject, pyqtSignal
 from pathlib import Path
 from backend.config import (
@@ -29,12 +28,12 @@ class SignalGenWorker(QObject):
     def connect_device(self):
         """Open VISA resource for the 33120A at the configured GPIB address."""
         try:
+            import pyvisa  # lazy import — avoids loading VISA DLLs at app startup (conflicts with NI-DAQmx)
             self.rm = pyvisa.ResourceManager()
             addr = f"GPIB::{self.settings['gpib_address']}::INSTR"
             self.device = self.rm.open_resource(addr)
             self.device.timeout = 3000  # 3 s — avoids infinite hang on bad address
-            idn = self._query("*IDN?")
-            print(f"Signal gen connected: {idn}")
+            self._query("*IDN?")  # warm-up read; result currently ignored
             self.connection_changed.emit(True)
         except Exception as e:
             self.error_occurred.emit(f"VISA connect error: {e}")

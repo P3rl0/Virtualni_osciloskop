@@ -1,11 +1,9 @@
-import utils.dll_fix  # noqa: F401 must be imported before nidaqmx to fix DLL loading issues on Windows
 import queue
 from collections import deque
 from pathlib import Path
 import numpy as np
 import nidaqmx
 from nidaqmx.constants import AcquisitionType
-from nidaqmx.errors import DaqError
 from PyQt5.QtCore import QObject, pyqtSignal
 from backend.processing import TriggerProcessor, Measurements
 from backend.config import (
@@ -32,8 +30,6 @@ class DaqWorker(QObject):
     def __init__(self):
         super().__init__()
         self.settings = load_yaml(self.path / "config.yaml", area="daq")
-        print(self.path)
-        print(self.path / "config.yaml")
         self.queue = queue.Queue()
         self.task = None
         self.timebase = self.settings["timebase"]
@@ -76,10 +72,7 @@ class DaqWorker(QObject):
             )
             self.task.register_every_n_samples_acquired_into_buffer_event(self.buff_transfer, self._buff_callback)
             self.task.start()
-            print(
-                f"DAQ task started with sample rate: {self.sample_rate} S/s, buffer transfer size: {self.buff_transfer} samples, nidaqmx buffer size: {self.nidaqmx_buffer_size} samples"
-            )
-        except DaqError as e:
+        except Exception as e:
             self.error_occurred.emit(f"NIDAQmx Error: {e}")
             print(f"NIDAQmx Error: {e}")
             self.stop_task()
@@ -91,8 +84,26 @@ class DaqWorker(QObject):
             self.task = None
 
     def restart_task(self):
-        self.stop_task()
+        # Don't let a stop_task failure (rare driver state) prevent the
+        # subsequent start_task — force self.task = None and continue.
+        try:
+            self.stop_task()
+        except Exception as e:
+            self.error_occurred.emit(f"stop_task failed during restart: {e}")
+            self.task = None
         self.start_task()
+
+    def clear_buffers(self):
+        """Drop all queued and ring-buffered samples.
+        Use when arming a single capture so the trigger doesn't fire on
+        stale data acquired before the user pressed Run."""
+        while True:
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                break
+        for buf in self.ring_buffer:
+            buf.clear()
 
     def set_timebase(self, timebase_val):
         if timebase_val not in TIMEBASE_MAP:
@@ -129,8 +140,20 @@ class DaqWorker(QObject):
         if attenuation_val not in PROBE_ATTENUATION:
             self.error_occurred.emit(f"Invalid attenuation value: {attenuation_val}")
             return
+        # Software-applied in poll_queue — no task restart needed.
+        # Rescale samples already in the ring buffer so the change is visible
+        # on the very next frame instead of slowly bleeding in as new data
+        # arrives. (poll_queue stores samples already multiplied by the
+        # current attenuation, so we just rescale by the ratio.)
+        old = self.channels[chan_index]["probe_attenuation"]
         self.channels[chan_index]["probe_attenuation"] = attenuation_val
-        self.restart_task()
+        if old > 0 and old != attenuation_val:
+            ratio = attenuation_val / old
+            buf = self.ring_buffer[chan_index]
+            if len(buf) > 0:
+                scaled = [s * ratio for s in buf]
+                buf.clear()
+                buf.extend(scaled)
 
     def set_coupling(self, coupling_val, chan_index):
         if chan_index < 0 or chan_index >= len(self.channels):
@@ -157,6 +180,10 @@ class DaqWorker(QObject):
             self.error_occurred.emit(f"Invalid channel index: {chan_index}")
             return
         self.channels[chan_index]["enable"] = enable
+        # Channel count is changing → packet shape changes and per-channel
+        # ring buffers would desync. Drop everything so all channels start
+        # at the same fill level.
+        self.clear_buffers()
         self.restart_task()
 
     def set_channel_name(self, name: str, chan_index: int):
@@ -176,8 +203,9 @@ class DaqWorker(QObject):
         try:
             data = np.atleast_2d(self.task.read(n_samples))  # type: ignore
             self.queue.put(data)
-        except DaqError as e:
-            self.error_occurred.emit(f"NIDAQmx Error: {e}")
+        except Exception as e:
+            # Must NOT raise from NI's callback thread — would crash the driver.
+            self.error_occurred.emit(f"DAQ callback error: {e}")
         return 0
 
     def poll_queue(self):
@@ -185,12 +213,29 @@ class DaqWorker(QObject):
             return
 
         active_indices = [i for i, ch in enumerate(self.channels) if ch["enable"]]
-        temp_data = [[] for _ in range(len(active_indices))]
+        n_active = len(active_indices)
 
+        # No active channels — drain the queue and bail. Anything queued is stale.
+        if n_active == 0:
+            while not self.queue.empty():
+                try:
+                    self.queue.get_nowait()
+                except queue.Empty:
+                    break
+            return
+
+        temp_data = [[] for _ in range(n_active)]
         while not self.queue.empty():
-            data = self.queue.get_nowait()  # shape (n_active, n_samples)
-            for active_idx in range(len(active_indices)):
+            data = self.queue.get_nowait()
+            # Defensive: discard packets from before a channel-enable change.
+            if data.shape[0] != n_active:
+                continue
+            for active_idx in range(n_active):
                 temp_data[active_idx].append(data[active_idx])
+
+        # All packets were stale — nothing to feed into the trigger.
+        if not temp_data[0]:
+            return
 
         for active_idx, phys_idx in enumerate(active_indices):
             combined = np.concatenate(temp_data[active_idx]) * self.channels[phys_idx]["probe_attenuation"]
