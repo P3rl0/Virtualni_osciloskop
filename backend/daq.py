@@ -105,6 +105,95 @@ class DaqWorker(QObject):
         for buf in self.ring_buffer:
             buf.clear()
 
+    def _range_for_vdiv(self, vdiv: float) -> float:
+        """Pick the smallest supported hardware range that fits the given V/div."""
+        thresholds = sorted(MEASURING_RANGE_THRESHOLDS.keys())
+        for t in thresholds:
+            if vdiv <= t:
+                return MEASURING_RANGE_THRESHOLDS[t]
+        return MEASURING_RANGE_THRESHOLDS[thresholds[-1]]
+
+    def autoset(self) -> bool:
+        """Auto-detect signals on enabled channels and pick a sensible V/div,
+        vertical offset, timebase, and trigger level so 1-2 full periods are
+        centred and span ~6 vertical divisions. Returns True if at least one
+        channel's data could be analysed.
+
+        Uses the current ring buffer — requires the task to have been running
+        long enough to fill at least a few hundred samples.
+        """
+        enabled = [i for i, ch in enumerate(self.channels) if ch["enable"]]
+        if not enabled:
+            self.error_occurred.emit("Autoset: no channels enabled.")
+            return False
+
+        changed_any = False
+
+        # ── Per-channel: V/div + vertical offset ─────────────────────────
+        for i in enabled:
+            data = np.asarray(self.ring_buffer[i], dtype=float)
+            if data.size < 100:
+                continue  # not enough samples to make a good decision
+
+            pmin, pmax = float(np.min(data)), float(np.max(data))
+            pp = pmax - pmin
+            centre = (pmax + pmin) / 2.0
+
+            # Aim for ~6 divisions of pk-pk so signal fills the middle.
+            if pp >= 1e-7:
+                target_vdiv = pp / 6.0
+            else:
+                # Effectively flat / DC: scale to the offset magnitude.
+                target_vdiv = max(abs(centre) * 0.5, VOLTS_PER_DIV[0])
+
+            # Smallest VOLTS_PER_DIV >= target.
+            new_vdiv = next((v for v in sorted(VOLTS_PER_DIV) if v >= target_vdiv),
+                            VOLTS_PER_DIV[-1])
+            self.channels[i]["volts_per_div"] = new_vdiv
+            self.channels[i]["range"] = self._range_for_vdiv(new_vdiv)
+            # Center the trace: pick offset so the signal's mid-point reads 0 V
+            # on screen. Plot formula is y_div = (V + offset) / vdiv, so a
+            # signal centred around `centre` is centred around y=0 when
+            # offset = -centre.
+            self.channels[i]["vertical_offset"] = -centre
+            changed_any = True
+
+        # ── Trigger source: pick the most varying enabled channel ───────
+        best_idx = enabled[0]
+        best_pp = -1.0
+        for i in enabled:
+            d = np.asarray(self.ring_buffer[i], dtype=float)
+            if d.size < 100:
+                continue
+            pp = float(np.max(d) - np.min(d))
+            if pp > best_pp:
+                best_pp = pp
+                best_idx = i
+
+        self.trigger.set_trigger_channel(best_idx)
+        self.trigger.set_trigger_level(0.0)   # centred signal -> midpoint is 0V
+        self.trigger.set_trigger_offset(0.0)  # event at centre of screen
+
+        # ── Timebase: aim for ~2 full periods on screen ──────────────────
+        ref = np.asarray(self.ring_buffer[best_idx], dtype=float)
+        if ref.size >= 100:
+            freq = self.measurements.frequency(ref, self.sample_rate)
+            if freq is not None and freq > 0:
+                # 2 periods over 12 divisions -> 1 period over 6 divs -> tb = T/6
+                target_tb = 1.0 / (6.0 * freq)
+                new_tb = min(TIMEBASE_MAP.keys(),
+                             key=lambda t: abs(t - target_tb))
+                if new_tb != self.timebase:
+                    self.timebase = new_tb
+                    self.settings["timebase"] = new_tb
+                    self._set_sample_rate()
+                changed_any = True
+
+        # Apply all the changes at once (one task restart instead of N).
+        if changed_any:
+            self.restart_task()
+        return changed_any
+
     def set_timebase(self, timebase_val):
         if timebase_val not in TIMEBASE_MAP:
             self.error_occurred.emit(f"Invalid timebase value: {timebase_val}")

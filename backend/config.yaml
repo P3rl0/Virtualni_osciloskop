@@ -1,12 +1,12 @@
 daq_settings:
-  timebase: 1.0
+  timebase: 0.002
   channels:
   - enable: true
     name: Dev2/ai0
     terminal_config: RSE
     probe_attenuation: 1.0
     coupling: DC
-    volts_per_div: 2.0
+    volts_per_div: 0.002
     vertical_offset: 0.0
   - enable: true
     name: Dev2/ai1
@@ -31,8 +31,8 @@ daq_settings:
     vertical_offset: 0.0
 processor_settings:
   trigger_type: normal
-  trigger_level: -2.9700000000000113
-  trigger_offset: -0.4260000000000003
+  trigger_level: -0.01968
+  trigger_offset: -0.011960000000000002
   trigger_slope: rising
   trigger_channel: 0
   measurements:

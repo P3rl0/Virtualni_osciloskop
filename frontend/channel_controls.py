@@ -1,10 +1,18 @@
+import math
+
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
     QCheckBox, QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QPushButton, QWidget,
 )
 from nidaqmx.constants import Coupling, TerminalConfiguration
-from backend.config import VOLTS_PER_DIV
+from backend.config import NUM_VERTICAL_DIVS, VOLTS_PER_DIV
+
+
+def _decimals_for_step(step: float) -> int:
+    if step <= 0 or not math.isfinite(step):
+        return 4
+    return max(1, min(6, -int(math.floor(math.log10(step))) + 1))
 
 
 def _fmt_vdiv(v):
@@ -63,10 +71,8 @@ class ChannelPanel(QGroupBox):
             self._vdiv_combo.addItem(_fmt_vdiv(v), v)
         header.addWidget(self._vdiv_combo, stretch=1)
 
+        # Range/step retargeted by update_scales() based on the channel's V/div.
         self._offset_spin = QDoubleSpinBox()
-        self._offset_spin.setRange(-50.0, 50.0)
-        self._offset_spin.setSingleStep(0.1)
-        self._offset_spin.setDecimals(2)
         self._offset_spin.setSuffix(" V")
         self._offset_spin.setFixedWidth(80)
         header.addWidget(self._offset_spin)
@@ -110,6 +116,10 @@ class ChannelPanel(QGroupBox):
 
         # ── Initialise from backend ──────────────────────────────────────
         self._load_from_backend()
+        # Retarget the offset spinbox's range/step to current V/div BEFORE
+        # signals are wired so the setValue() inside _load_from_backend
+        # didn't trip a slot with stale range.
+        self.update_scales()
 
         # ── Connect signals ──────────────────────────────────────────────
         self._enable_cb.stateChanged.connect(self._on_enable)
@@ -169,6 +179,9 @@ class ChannelPanel(QGroupBox):
 
     def _on_vdiv(self, index):
         self._daq.set_volts_per_div(VOLTS_PER_DIV[index], self._idx)
+        # V/div changed -> retarget offset spinbox so it stays at sane
+        # resolution relative to the new vertical scale.
+        self.update_scales()
         self.channel_settings_changed.emit()
 
     def _on_offset(self, value):
@@ -190,3 +203,34 @@ class ChannelPanel(QGroupBox):
     def _on_name(self):
         self._daq.set_channel_name(self._name_edit.text().strip(), self._idx)
         self.channel_settings_changed.emit()
+
+    def update_scales(self):
+        """Retarget the vertical-offset spinbox's range/step/decimals to match
+        the channel's current V/div. Range = ±10 divisions worth of volts;
+        step = 1/100 of a division (so a single click is a tiny visible nudge)."""
+        try:
+            vdiv = max(1e-9, float(self._daq.channels[self._idx]["volts_per_div"]))
+        except (KeyError, IndexError):
+            vdiv = 1.0
+
+        # Allow offset of ±10 divisions — enough to push the trace fully off
+        # screen in either direction (visible range is ±5 divisions).
+        off_range = vdiv * NUM_VERTICAL_DIVS  # = ±5 divs * 2 headroom
+        off_step  = vdiv * 0.01
+        self._offset_spin.blockSignals(True)
+        self._offset_spin.setDecimals(_decimals_for_step(off_step))
+        self._offset_spin.setRange(-off_range, off_range)
+        self._offset_spin.setSingleStep(off_step)
+        self._offset_spin.blockSignals(False)
+
+        # Clamping (if range tightened) — sync the clamped value to backend
+        # so the trace position matches what the spinbox now reads.
+        cur = self._offset_spin.value()
+        if cur != self._daq.channels[self._idx]["vertical_offset"]:
+            self._daq.set_vertical_offset(cur, self._idx)
+
+    def refresh(self):
+        """Reload all widget values from the backend and retarget scales.
+        Used by main_window after an autoset (or any out-of-band backend mutation)."""
+        self._load_from_backend()
+        self.update_scales()

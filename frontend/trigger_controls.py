@@ -1,9 +1,19 @@
+import math
+
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
     QComboBox, QDoubleSpinBox, QLabel, QPushButton,
 )
-from backend.config import TRIGGER_TYPE
+from backend.config import NUM_VERTICAL_DIVS, NUM_HORIZONTAL_DIVS, TRIGGER_TYPE
+
+
+def _decimals_for_step(step: float) -> int:
+    """How many decimals does a QDoubleSpinBox need so a single step is visible?
+    Avoid 0 (hides sub-unit motion) and cap at 6 (Qt's practical precision)."""
+    if step <= 0 or not math.isfinite(step):
+        return 4
+    return max(1, min(6, -int(math.floor(math.log10(step))) + 1))
 
 
 class TriggerPanel(QGroupBox):
@@ -89,6 +99,8 @@ class TriggerPanel(QGroupBox):
 
         # Initialise from backend
         self._load_from_backend()
+        # Adapt step + range to current timebase / trigger-channel V/div.
+        self.update_scales()
 
         # Connect signals
         self._source_combo.currentIndexChanged.connect(self._on_source)
@@ -123,8 +135,83 @@ class TriggerPanel(QGroupBox):
     # ── Slots ─────────────────────────────────────────────────────────────
 
     def _on_source(self, index):
+        # Preserve the line's on-screen y position across source switches.
+        # The plot draws the level at y_div = (level + ch_offset) / ch_vdiv.
+        # When the source channel changes, the new channel has its own
+        # vdiv/offset — keeping the level in volts unchanged would yank
+        # the line wildly off-screen. Compute the current y_div from the
+        # OLD channel and back-solve a new level so y_div stays the same.
+        old_idx = self._daq.trigger.settings["trigger_channel"]
+        try:
+            old_vdiv   = self._daq.channels[old_idx]["volts_per_div"]
+            old_offset = self._daq.channels[old_idx]["vertical_offset"]
+            old_level  = self._daq.trigger.settings["trigger_level"]
+            y_div = (old_level + old_offset) / old_vdiv if old_vdiv > 0 else 0.0
+            new_vdiv   = self._daq.channels[index]["volts_per_div"]
+            new_offset = self._daq.channels[index]["vertical_offset"]
+            new_level  = y_div * new_vdiv - new_offset
+        except (KeyError, IndexError, ZeroDivisionError):
+            new_level = self._daq.trigger.settings["trigger_level"]
+
+        # Order is important:
+        #   1. Switch channel so update_scales reads the new channel's vdiv.
+        #   2. update_scales — adjusts spinbox range + clamp-syncs to backend.
+        #   3. Override level with our preserved-y_div value (fits new range).
         self._daq.trigger.set_trigger_channel(index)
+        self.update_scales()
+        self._level_spin.blockSignals(True)
+        self._level_spin.setValue(new_level)
+        self._level_spin.blockSignals(False)
+        self._daq.trigger.set_trigger_level(self._level_spin.value())
         self.trigger_settings_changed.emit()
+
+    def update_scales(self):
+        """Retarget the level and offset spinboxes' range, step, and decimals
+        to match the current timebase and the current trigger channel's V/div.
+
+        Call this when:
+          - timebase changes
+          - trigger source channel changes
+          - the trigger channel's V/div or vertical offset changes
+        """
+        tb = max(1e-9, float(self._daq.timebase))
+        chan_idx = self._daq.trigger.settings["trigger_channel"]
+        try:
+            vdiv = max(1e-9, float(self._daq.channels[chan_idx]["volts_per_div"]))
+        except (KeyError, IndexError):
+            vdiv = 1.0
+
+        # Offset: cover ±half the plot width in seconds. Step = 1/100 of a
+        # division so a single click is a tiny visible nudge.
+        half_x_div = NUM_HORIZONTAL_DIVS / 2.0
+        off_range  = half_x_div * tb
+        off_step   = tb * 0.01
+        self._offset_spin.blockSignals(True)
+        self._offset_spin.setDecimals(_decimals_for_step(off_step))
+        self._offset_spin.setRange(-off_range, off_range)
+        self._offset_spin.setSingleStep(off_step)
+        self._offset_spin.blockSignals(False)
+
+        # Level: cover ±plot-height worth of volts (allowing some headroom
+        # past the visible 5-div edge). Step = 1/100 of a division of V.
+        half_y_div = NUM_VERTICAL_DIVS / 2.0
+        lvl_range  = half_y_div * vdiv * 2.0  # 2× the visible range = headroom
+        lvl_step   = vdiv * 0.01
+        self._level_spin.blockSignals(True)
+        self._level_spin.setDecimals(_decimals_for_step(lvl_step))
+        self._level_spin.setRange(-lvl_range, lvl_range)
+        self._level_spin.setSingleStep(lvl_step)
+        self._level_spin.blockSignals(False)
+
+        # The spinboxes silently clamp their value to the new range. If a
+        # channel V/div change pushed the level outside the new bounds, the
+        # backend would still hold the old (now-invisible) value. Sync.
+        cur_lvl = self._level_spin.value()
+        if cur_lvl != self._daq.trigger.settings["trigger_level"]:
+            self._daq.trigger.set_trigger_level(cur_lvl)
+        cur_off = self._offset_spin.value()
+        if cur_off != self._daq.trigger.settings["trigger_offset"]:
+            self._daq.trigger.set_trigger_offset(cur_off)
 
     def _on_slope(self, checked):
         falling = checked

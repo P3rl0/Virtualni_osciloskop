@@ -1,4 +1,10 @@
-import utils.dll_fix  # noqa: F401  MUST be first — loads nicaiu.dll before PyQt/nidaqmx
+import os
+# Force pyqtgraph to use PyQt5. Without this it auto-detects in the order
+# PyQt6 -> PySide6 -> PyQt5 -> PySide2 and can crash on machines that have
+# a partial PyQt6/PySide6 install lying around from other projects.
+os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"
+
+import utils.dll_fix  # noqa: F401  MUST be early — loads nicaiu.dll before PyQt/nidaqmx
 import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QPalette, QColor

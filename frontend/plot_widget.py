@@ -1,3 +1,9 @@
+import os
+# Pin pyqtgraph to PyQt5 before its first import. Without this, pyqtgraph
+# auto-detects in the order PyQt6 -> PySide6 -> PyQt5 -> PySide2 and can
+# crash on machines with a partial PyQt6/PySide6 install lying around.
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal

@@ -1,9 +1,14 @@
+import os
+# Belt-and-braces: pyqtgraph binding pin in case this module is imported
+# before main.py sets the env var (e.g. from a test or REPL).
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
+
 from datetime import datetime
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QMainWindow,
+    QComboBox, QHBoxLayout, QLabel, QMainWindow, QPushButton,
     QScrollArea, QStatusBar, QVBoxLayout, QWidget,
 )
 import pyqtgraph.exporters
@@ -94,24 +99,30 @@ class OscilloscopeWindow(QMainWindow):
         right_scroll.setWidget(right_widget)
         outer.addWidget(right_scroll, stretch=0)
 
-        # Timebase row
+        # Timebase row + Auto button
         tb_row = QHBoxLayout()
         tb_row.addWidget(QLabel("Timebase:"))
         self._timebase_combo = QComboBox()
         for label in _TIMEBASE_LABELS:
             self._timebase_combo.addItem(label)
-        # set current timebase from backend
         tb_sec = self.daq.timebase
         if tb_sec in _TIMEBASE_KEYS:
             self._timebase_combo.setCurrentIndex(_TIMEBASE_KEYS.index(tb_sec))
         tb_row.addWidget(self._timebase_combo, stretch=1)
+        self._autoset_btn = QPushButton("Auto")
+        self._autoset_btn.setToolTip(
+            "Autoset: pick V/div, vertical offset, timebase, and trigger "
+            "level so the signal is centred and 1-2 periods are visible."
+        )
+        self._autoset_btn.setFixedWidth(60)
+        tb_row.addWidget(self._autoset_btn)
         right_layout.addLayout(tb_row)
 
         # Channel panels
         self._ch_panels = []
         for i in range(len(self.daq.channels)):
             panel = ChannelPanel(i, CHANNEL_COLORS[i], self.daq)
-            panel.channel_settings_changed.connect(self._refresh_overlay)
+            panel.channel_settings_changed.connect(self._on_channel_settings_changed)
             right_layout.addWidget(panel)
             self._ch_panels.append(panel)
 
@@ -146,6 +157,7 @@ class OscilloscopeWindow(QMainWindow):
         self._timebase_combo.currentIndexChanged.connect(self._on_timebase)
         self.plot.trigger_position_dragged.connect(self._on_trigger_pos_dragged)
         self.trigger_panel.trigger_settings_changed.connect(self._on_trigger_settings_changed)
+        self._autoset_btn.clicked.connect(self._on_autoset)
 
         self._data_received = False
 
@@ -204,6 +216,15 @@ class OscilloscopeWindow(QMainWindow):
         # Trigger arrow x-position is `6 + offset/timebase`, so a timebase
         # change moves it even if offset didn't change. Reposition immediately.
         self._refresh_overlay()
+        # Trigger spinbox step/range depend on timebase — retarget them too.
+        self.trigger_panel.update_scales()
+
+    def _on_channel_settings_changed(self):
+        # Channel V/div or vertical offset can affect the trigger level line
+        # (if this is the trigger source) and the level spinbox step. Run
+        # update_scales so the spinbox stays at a sane resolution.
+        self._refresh_overlay()
+        self.trigger_panel.update_scales()
 
     def _on_trigger_settings_changed(self):
         # Reposition the lines from the new backend values, then flash them.
@@ -216,6 +237,33 @@ class OscilloscopeWindow(QMainWindow):
         offset_s = (x_div - NUM_HORIZONTAL_DIVS / 2) * timebase
         self.daq.trigger.set_trigger_offset(offset_s)
         self.trigger_panel.set_offset_external(offset_s)
+
+    def _on_autoset(self):
+        """Trigger backend autoset, then reload every panel so the GUI
+        reflects the new V/div, offsets, timebase, and trigger level."""
+        ok = self.daq.autoset()
+        if not ok:
+            self._status.showMessage(
+                "Autoset: not enough data yet — let acquisition run for a moment, then try again.",
+                4000,
+            )
+            return
+        # Timebase combo
+        tb = self.daq.timebase
+        if tb in _TIMEBASE_KEYS:
+            self._timebase_combo.blockSignals(True)
+            self._timebase_combo.setCurrentIndex(_TIMEBASE_KEYS.index(tb))
+            self._timebase_combo.blockSignals(False)
+        # Channel panels (V/div, offset, etc.)
+        for panel in self._ch_panels:
+            panel.refresh()
+        # Trigger panel (level, source, offset)
+        self.trigger_panel._load_from_backend()
+        self.trigger_panel.update_scales()
+        # Overlay + flash the trigger lines so the user sees the result
+        self._refresh_overlay()
+        self.plot.show_trigger_lines()
+        self._status.showMessage("Autoset complete", 3000)
 
     def _on_error(self, msg: str):
         self._status.showMessage(f"Error: {msg}", 0)
