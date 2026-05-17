@@ -171,6 +171,7 @@ HYST_MULTIPLIER = 0.03
 
 # region SIGNAL GEN CONFIG
 SIGGEN_WAVEFORMS = ["SIN", "SQU", "TRI", "RAMP"]  # 33120A standard waveforms
+SIGGEN_AMP_UNITS = ["VPP", "VRMS", "DBM"]  # SCPI VOLT:UNIT options on Keysight/Agilent gens
 SIGGEN_LOAD = ["INF", "50"]  # High-Z = INF, 50 Ω = 50
 SIGGEN_FREQ_MIN = 100e-6  # 100 µHz (33120A spec)
 SIGGEN_FREQ_MAX = 15e6  # 15 MHz (33120A spec)

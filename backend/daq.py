@@ -91,6 +91,12 @@ class DaqWorker(QObject):
         except Exception as e:
             self.error_occurred.emit(f"stop_task failed during restart: {e}")
             self.task = None
+        # Discard stale samples. After settings changes (timebase, V/div,
+        # coupling, terminal, channel toggle…) any data still queued from
+        # the OLD task was acquired at the old sample rate / range / coupling.
+        # Mixing it with NEW data corrupts time/voltage interpretation —
+        # the trace appears momentarily DC-shifted or time-stretched.
+        self.clear_buffers()
         self.start_task()
 
     def clear_buffers(self):

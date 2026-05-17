@@ -2,12 +2,16 @@ from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
     QComboBox, QDoubleSpinBox, QLabel, QPushButton, QSpinBox,
 )
-from backend.config import SIGGEN_WAVEFORMS, SIGGEN_FREQ_MAX, SIGGEN_FREQ_MIN
+from backend.config import (
+    SIGGEN_AMP_UNITS, SIGGEN_WAVEFORMS, SIGGEN_FREQ_MAX, SIGGEN_FREQ_MIN,
+)
 
 _UNIT_OPTIONS = ["Hz", "kHz", "MHz"]
 _UNIT_MULT    = [1.0, 1e3, 1e6]
 _LOAD_LABELS  = ["Hi-Z (INF)", "50 Ω"]
 _LOAD_VALUES  = ["INF", "50"]
+# User-facing amplitude unit labels; parallel to SIGGEN_AMP_UNITS.
+_AMP_UNIT_LABELS = ["Vpp", "Vrms", "dBm"]
 
 
 class SignalGenPanel(QGroupBox):
@@ -15,6 +19,10 @@ class SignalGenPanel(QGroupBox):
         super().__init__("Signal Generator", parent)
         self._sg = signal_gen_worker
         self._connected = False
+        # True if connected model supports variable square-wave duty cycle.
+        # 33120A's square wave is hardware-fixed at 50%; everything newer
+        # (33220A, 33500B, 33600A, …) supports FUNC:SQU:DCYC.
+        self._duty_supported = True
 
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
@@ -65,8 +73,11 @@ class SignalGenPanel(QGroupBox):
         self._amp_spin.setRange(0.01, 20.0)
         self._amp_spin.setSingleStep(0.01)
         self._amp_spin.setDecimals(3)
-        self._amp_spin.setSuffix(" Vpp")
-        grid.addWidget(self._amp_spin, 2, 1, 1, 2)
+        grid.addWidget(self._amp_spin, 2, 1)
+        self._amp_unit_combo = QComboBox()
+        self._amp_unit_combo.addItems(_AMP_UNIT_LABELS)
+        self._amp_unit_combo.setFixedWidth(55)
+        grid.addWidget(self._amp_unit_combo, 2, 2)
 
         grid.addWidget(QLabel("Offset"), 3, 0)
         self._offset_spin = QDoubleSpinBox()
@@ -114,13 +125,16 @@ class SignalGenPanel(QGroupBox):
         self._freq_spin.valueChanged.connect(self._on_frequency)
         self._freq_unit.currentIndexChanged.connect(self._on_frequency)
         self._amp_spin.valueChanged.connect(lambda v: self._sg.set_amplitude(v))
+        self._amp_unit_combo.currentIndexChanged.connect(self._on_amp_unit)
         self._offset_spin.valueChanged.connect(lambda v: self._sg.set_offset(v))
         self._load_combo.currentIndexChanged.connect(lambda i: self._sg.set_load(_LOAD_VALUES[i]))
         self._duty_spin.valueChanged.connect(lambda v: self._sg.set_duty_cycle(v))
         self._output_btn.clicked.connect(self._on_output)
 
-        # Wire backend signal
+        # Wire backend signals
         self._sg.connection_changed.connect(self._on_connection_changed)
+        self._sg.amplitude_synced.connect(self._on_amplitude_synced)
+        self._sg.model_detected.connect(self._on_model_detected)
 
     # ── Init ─────────────────────────────────────────────────────────────
 
@@ -147,6 +161,9 @@ class SignalGenPanel(QGroupBox):
             self._freq_spin.setValue(freq_hz)
 
         self._amp_spin.setValue(s.get("amplitude", 1.0))
+        amp_unit = s.get("amplitude_unit", "VPP")
+        if amp_unit in SIGGEN_AMP_UNITS:
+            self._amp_unit_combo.setCurrentIndex(SIGGEN_AMP_UNITS.index(amp_unit))
         self._offset_spin.setValue(s.get("offset", 0.0))
 
         load = s.get("load", "INF")
@@ -163,7 +180,8 @@ class SignalGenPanel(QGroupBox):
 
     def _block(self, state: bool):
         for w in (self._wave_combo, self._freq_spin, self._freq_unit,
-                  self._amp_spin, self._offset_spin, self._load_combo,
+                  self._amp_spin, self._amp_unit_combo,
+                  self._offset_spin, self._load_combo,
                   self._duty_spin, self._output_btn):
             w.blockSignals(state)
 
@@ -174,9 +192,13 @@ class SignalGenPanel(QGroupBox):
 
     def _set_controls_enabled(self, enabled: bool):
         for w in (self._wave_combo, self._freq_spin, self._freq_unit,
-                  self._amp_spin, self._offset_spin, self._load_combo,
-                  self._duty_spin, self._output_btn):
+                  self._amp_spin, self._amp_unit_combo,
+                  self._offset_spin, self._load_combo,
+                  self._output_btn):
             w.setEnabled(enabled)
+        # Duty cycle is tracked separately because some models (33120A) lack it.
+        self._duty_spin.setEnabled(enabled and self._duty_supported)
+        self._duty_label.setEnabled(enabled and self._duty_supported)
 
     # ── Slots ─────────────────────────────────────────────────────────────
 
@@ -222,3 +244,32 @@ class SignalGenPanel(QGroupBox):
     def _on_output(self, checked: bool):
         self._output_btn.setText("OUTPUT ON" if checked else "OUTPUT OFF")
         self._sg.set_output(checked)
+
+    def _on_amp_unit(self, idx: int):
+        if 0 <= idx < len(SIGGEN_AMP_UNITS):
+            self._sg.set_amplitude_unit(SIGGEN_AMP_UNITS[idx])
+
+    def _on_amplitude_synced(self, value: float, unit: str):
+        """Backend changed the amplitude unit and queried the device for the
+        converted value — push both into the GUI without re-firing slots."""
+        self._amp_spin.blockSignals(True)
+        self._amp_spin.setValue(value)
+        self._amp_spin.blockSignals(False)
+        if unit in SIGGEN_AMP_UNITS:
+            idx = SIGGEN_AMP_UNITS.index(unit)
+            self._amp_unit_combo.blockSignals(True)
+            self._amp_unit_combo.setCurrentIndex(idx)
+            self._amp_unit_combo.blockSignals(False)
+
+    def _on_model_detected(self, model: str):
+        """Disable controls the connected model doesn't support."""
+        self._duty_supported = "33120A" not in model.upper()
+        if not self._duty_supported:
+            self._duty_spin.setToolTip(
+                "Square-wave duty cycle is fixed at 50% on this model; "
+                "use a 33220A or newer for variable duty."
+            )
+        else:
+            self._duty_spin.setToolTip("")
+        # Re-evaluate enabled state with the new support flag.
+        self._set_controls_enabled(self._connected)
