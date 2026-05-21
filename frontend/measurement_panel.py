@@ -92,6 +92,9 @@ class MeasurementPanel(QWidget):
                 self._checks[(ch, meas_key)] = cb
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Reflect initial channel-enable state (e.g. channels disabled in YAML
+        # should show greyed-out checkboxes + "---" values from the start).
+        self.refresh_channel_state()
 
     def _on_toggle(self, ch, meas_key, enabled):
         self._daq.measurements.set_measurement(ch, meas_key, enabled)
@@ -104,3 +107,18 @@ class MeasurementPanel(QWidget):
             lbl = self._labels.get((ch, name))
             if lbl is not None:
                 lbl.setText(_fmt(name, value))
+
+    def refresh_channel_state(self):
+        """Sync the panel to which channels are currently enabled.
+        Call when any channel's enable flag changes. Disabled channels get:
+          - all value labels cleared to "---"
+          - all checkboxes greyed out (the checked state is preserved so it
+            returns when the channel is re-enabled)."""
+        enabled_channels = {i for i, ch in enumerate(self._daq.channels) if ch["enable"]}
+        for (ch, name), lbl in self._labels.items():
+            cb = self._checks[(ch, name)]
+            if ch in enabled_channels:
+                cb.setEnabled(True)
+            else:
+                cb.setEnabled(False)
+                lbl.setText("---")

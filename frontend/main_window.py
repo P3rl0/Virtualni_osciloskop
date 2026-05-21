@@ -225,6 +225,9 @@ class OscilloscopeWindow(QMainWindow):
         # update_scales so the spinbox stays at a sane resolution.
         self._refresh_overlay()
         self.trigger_panel.update_scales()
+        # Enable/disable flag may have changed too — keep the measurement
+        # panel in sync so disabled channels show "---" and grey checkboxes.
+        self.meas_panel.refresh_channel_state()
 
     def _on_trigger_settings_changed(self):
         # Reposition the lines from the new backend values, then flash them.
@@ -260,8 +263,9 @@ class OscilloscopeWindow(QMainWindow):
         # Trigger panel (level, source, offset)
         self.trigger_panel._load_from_backend()
         self.trigger_panel.update_scales()
-        # Overlay + flash the trigger lines so the user sees the result
+        # Overlay + measurement-panel channel state + flash the trigger lines
         self._refresh_overlay()
+        self.meas_panel.refresh_channel_state()
         self.plot.show_trigger_lines()
         self._status.showMessage("Autoset complete", 3000)
 
