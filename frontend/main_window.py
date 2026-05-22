@@ -146,6 +146,8 @@ class OscilloscopeWindow(QMainWindow):
         self._timebase_combo.currentIndexChanged.connect(self._on_timebase)
         self.plot.trigger_position_dragged.connect(self._on_trigger_pos_dragged)
         self.trigger_panel.trigger_settings_changed.connect(self._on_trigger_settings_changed)
+        for panel in self._ch_panels:
+            panel.channel_settings_changed.connect(self.trigger_panel.update_step_sizes)
 
         self._data_received = False
 
@@ -201,6 +203,7 @@ class OscilloscopeWindow(QMainWindow):
 
     def _on_timebase(self, index):
         self.daq.set_timebase(_TIMEBASE_KEYS[index])
+        self.trigger_panel.update_step_sizes()
         # Trigger arrow x-position is `6 + offset/timebase`, so a timebase
         # change moves it even if offset didn't change. Reposition immediately.
         self._refresh_overlay()

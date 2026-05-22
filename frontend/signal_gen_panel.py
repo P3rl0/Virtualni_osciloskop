@@ -1,13 +1,30 @@
+import math
+
 from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
     QComboBox, QDoubleSpinBox, QLabel, QPushButton, QSpinBox,
 )
-from backend.config import SIGGEN_WAVEFORMS, SIGGEN_FREQ_MAX, SIGGEN_FREQ_MIN
+from backend.config import (
+    SIGGEN_WAVEFORMS, SIGGEN_FREQ_MAX, SIGGEN_FREQ_MIN,
+    SIGGEN_AMP_MIN, SIGGEN_AMP_MAX, SIGGEN_AMP_MAX_VRMS,
+)
 
 _UNIT_OPTIONS = ["Hz", "kHz", "MHz"]
 _UNIT_MULT    = [1.0, 1e3, 1e6]
 _LOAD_LABELS  = ["Hi-Z (INF)", "50 Ω"]
 _LOAD_VALUES  = ["INF", "50"]
+_AMP_UNIT_LABELS = ["Vpp", "Vrms"]
+_AMP_UNIT_VALUES = ["VPP", "VRMS"]
+
+# Vpp / Vrms ratio per waveform — used to convert the displayed amplitude when
+# the unit toggle flips, so the physical output level stays the same.
+# (Assumes 50% duty for SQU; close enough for the toggle UX.)
+_VPP_OVER_VRMS = {
+    "SIN":  2.0 * math.sqrt(2.0),   # ≈ 2.828
+    "SQU":  2.0,
+    "TRI":  2.0 * math.sqrt(3.0),   # ≈ 3.464
+    "RAMP": 2.0 * math.sqrt(3.0),
+}
 
 
 class SignalGenPanel(QGroupBox):
@@ -62,11 +79,17 @@ class SignalGenPanel(QGroupBox):
 
         grid.addWidget(QLabel("Amplitude"), 2, 0)
         self._amp_spin = QDoubleSpinBox()
-        self._amp_spin.setRange(0.01, 20.0)
         self._amp_spin.setSingleStep(0.01)
         self._amp_spin.setDecimals(3)
-        self._amp_spin.setSuffix(" Vpp")
-        grid.addWidget(self._amp_spin, 2, 1, 1, 2)
+        grid.addWidget(self._amp_spin, 2, 1)
+        self._amp_unit_combo = QComboBox()
+        self._amp_unit_combo.addItems(_AMP_UNIT_LABELS)
+        self._amp_unit_combo.setFixedWidth(55)
+        grid.addWidget(self._amp_unit_combo, 2, 2)
+        # Initial range/suffix; _load_from_backend resets these to match the
+        # stored amplitude_unit, but we set defaults here so the widget is
+        # valid before _load_from_backend runs.
+        self._apply_amp_range("VPP")
 
         grid.addWidget(QLabel("Offset"), 3, 0)
         self._offset_spin = QDoubleSpinBox()
@@ -114,6 +137,7 @@ class SignalGenPanel(QGroupBox):
         self._freq_spin.valueChanged.connect(self._on_frequency)
         self._freq_unit.currentIndexChanged.connect(self._on_frequency)
         self._amp_spin.valueChanged.connect(lambda v: self._sg.set_amplitude(v))
+        self._amp_unit_combo.currentIndexChanged.connect(self._on_amp_unit)
         self._offset_spin.valueChanged.connect(lambda v: self._sg.set_offset(v))
         self._load_combo.currentIndexChanged.connect(lambda i: self._sg.set_load(_LOAD_VALUES[i]))
         self._duty_spin.valueChanged.connect(lambda v: self._sg.set_duty_cycle(v))
@@ -146,6 +170,11 @@ class SignalGenPanel(QGroupBox):
             self._apply_freq_range()
             self._freq_spin.setValue(freq_hz)
 
+        amp_unit = s.get("amplitude_unit", "VPP")
+        if amp_unit not in _AMP_UNIT_VALUES:
+            amp_unit = "VPP"
+        self._amp_unit_combo.setCurrentIndex(_AMP_UNIT_VALUES.index(amp_unit))
+        self._apply_amp_range(amp_unit)
         self._amp_spin.setValue(s.get("amplitude", 1.0))
         self._offset_spin.setValue(s.get("offset", 0.0))
 
@@ -163,8 +192,8 @@ class SignalGenPanel(QGroupBox):
 
     def _block(self, state: bool):
         for w in (self._wave_combo, self._freq_spin, self._freq_unit,
-                  self._amp_spin, self._offset_spin, self._load_combo,
-                  self._duty_spin, self._output_btn):
+                  self._amp_spin, self._amp_unit_combo, self._offset_spin,
+                  self._load_combo, self._duty_spin, self._output_btn):
             w.blockSignals(state)
 
     def _update_duty_visibility(self, waveform: str):
@@ -174,8 +203,8 @@ class SignalGenPanel(QGroupBox):
 
     def _set_controls_enabled(self, enabled: bool):
         for w in (self._wave_combo, self._freq_spin, self._freq_unit,
-                  self._amp_spin, self._offset_spin, self._load_combo,
-                  self._duty_spin, self._output_btn):
+                  self._amp_spin, self._amp_unit_combo, self._offset_spin,
+                  self._load_combo, self._duty_spin, self._output_btn):
             w.setEnabled(enabled)
 
     # ── Slots ─────────────────────────────────────────────────────────────
@@ -222,3 +251,39 @@ class SignalGenPanel(QGroupBox):
     def _on_output(self, checked: bool):
         self._output_btn.setText("OUTPUT ON" if checked else "OUTPUT OFF")
         self._sg.set_output(checked)
+
+    def _apply_amp_range(self, unit: str):
+        """Set the amplitude spinbox suffix and range to match the unit."""
+        self._amp_spin.blockSignals(True)
+        if unit == "VRMS":
+            self._amp_spin.setRange(0.001, SIGGEN_AMP_MAX_VRMS)
+            self._amp_spin.setSuffix(" Vrms")
+        else:
+            self._amp_spin.setRange(SIGGEN_AMP_MIN, SIGGEN_AMP_MAX)
+            self._amp_spin.setSuffix(" Vpp")
+        self._amp_spin.blockSignals(False)
+
+    def _on_amp_unit(self, index: int):
+        new_unit = _AMP_UNIT_VALUES[index]
+        old_unit = self._sg.settings.get("amplitude_unit", "VPP")
+        if new_unit == old_unit:
+            return
+        # Convert the displayed value so the physical output level is preserved.
+        waveform = self._sg.settings.get("waveform", "SIN")
+        ratio = _VPP_OVER_VRMS.get(waveform, _VPP_OVER_VRMS["SIN"])
+        old_value = self._amp_spin.value()
+        if old_unit == "VPP" and new_unit == "VRMS":
+            new_value = old_value / ratio
+        elif old_unit == "VRMS" and new_unit == "VPP":
+            new_value = old_value * ratio
+        else:
+            new_value = old_value
+        # Order matters: tell the instrument the new unit first so the
+        # following VOLT command is interpreted in the new unit.
+        self._sg.set_amplitude_unit(new_unit)
+        self._apply_amp_range(new_unit)
+        self._amp_spin.blockSignals(True)
+        self._amp_spin.setValue(new_value)
+        self._amp_spin.blockSignals(False)
+        # Push the converted value (clamped to the new range by the spinbox).
+        self._sg.set_amplitude(self._amp_spin.value())

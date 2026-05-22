@@ -177,8 +177,10 @@ SIGGEN_FREQ_MAX = 15e6  # 15 MHz (33120A spec)
 SIGGEN_AMP_MIN = 0.01  # 10 mVpp into 50 Ω
 SIGGEN_AMP_MAX = 20.0  # 20 Vpp into Hi-Z (10 Vpp into 50 Ω)
 SIGGEN_OFFSET_MAX = 5.0  # ± 5 V max offset
-SIGGEN_DUTY_MIN = 20.0  # 20% duty cycle (33120A limit)
-SIGGEN_DUTY_MAX = 80.0  # 80% duty cycle (33120A limit)
+SIGGEN_DUTY_MIN = 20.0  # 20% duty cycle (33120A limit, ≤5 MHz)
+SIGGEN_DUTY_MAX = 80.0  # 80% duty cycle (33120A limit, ≤5 MHz)
+SIGGEN_AMP_UNITS = ["VPP", "VRMS"]  # 33120A accepts VPP/VRMS/DBM; DBM omitted for UI simplicity
+SIGGEN_AMP_MAX_VRMS = 10.0  # 20 Vpp / 2 — max RMS for any waveform (square)
 # endregion SIGNAL GEN CONFIG
 
 # region FRONTEND CONFIG

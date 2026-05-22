@@ -1,3 +1,5 @@
+import math
+
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
@@ -135,6 +137,7 @@ class ChannelPanel(QGroupBox):
         self._vdiv_combo.setCurrentIndex(idx)
 
         self._offset_spin.setValue(ch["vertical_offset"])
+        self._apply_offset_step(vpd)
 
         coupling_str = "DC" if ch["coupling"] == Coupling.DC else "AC"
         self._coupling_combo.setCurrentIndex(_COUPLING_OPTIONS.index(coupling_str))
@@ -169,7 +172,17 @@ class ChannelPanel(QGroupBox):
 
     def _on_vdiv(self, index):
         self._daq.set_volts_per_div(VOLTS_PER_DIV[index], self._idx)
+        self._apply_offset_step(VOLTS_PER_DIV[index])
         self.channel_settings_changed.emit()
+
+    def _apply_offset_step(self, vdiv: float):
+        step = vdiv * 0.1
+        decimals = max(3, -int(math.floor(math.log10(step))) + 1)
+        self._offset_spin.blockSignals(True)
+        self._offset_spin.setDecimals(decimals)
+        self._offset_spin.setSingleStep(step)
+        self._offset_spin.setValue(self._daq.channels[self._idx]["vertical_offset"])
+        self._offset_spin.blockSignals(False)
 
     def _on_offset(self, value):
         self._daq.set_vertical_offset(value, self._idx)

@@ -8,6 +8,8 @@ from backend.config import (
     SIGGEN_FREQ_MAX,
     SIGGEN_AMP_MIN,
     SIGGEN_AMP_MAX,
+    SIGGEN_AMP_UNITS,
+    SIGGEN_AMP_MAX_VRMS,
     SIGGEN_OFFSET_MAX,
     SIGGEN_DUTY_MIN,
     SIGGEN_DUTY_MAX,
@@ -72,12 +74,14 @@ class SignalGenWorker(QObject):
         Call this once after connect_device() to synchronise instrument state."""
         self._write(f"FUNC {self.settings['waveform']}")
         self._write(f"FREQ {self.settings['frequency']}")
-        self._write("VOLT:UNIT VPP")  # always work in Vpp
+        self._write(f"VOLT:UNIT {self.settings.get('amplitude_unit', 'VPP')}")
         self._write(f"VOLT {self.settings['amplitude']}")
         self._write(f"VOLT:OFFS {self.settings['offset']}")
         self._write(f"OUTP:LOAD {self.settings['load']}")
         if self.settings["waveform"] == "SQU":
-            self._write(f"FUNC:SQU:DCYC {self.settings['duty_cycle']}")
+            # 33120A uses PULS:DCYC for square-wave duty cycle (the newer 33220A
+            # uses FUNC:SQU:DCYC — historical naming quirk).
+            self._write(f"PULS:DCYC {self.settings['duty_cycle']}")
         out = "ON" if self.settings["output_enabled"] else "OFF"
         self._write(f"OUTPUT {out}")
 
@@ -97,11 +101,24 @@ class SignalGenWorker(QObject):
         self.settings["frequency"] = freq_hz
         self._write(f"FREQ {freq_hz}")
 
-    def set_amplitude(self, vpp: float):
-        vpp = max(SIGGEN_AMP_MIN, min(SIGGEN_AMP_MAX, vpp))
-        self.settings["amplitude"] = vpp
-        self._write("VOLT:UNIT VPP")
-        self._write(f"VOLT {vpp}")
+    def set_amplitude(self, value: float):
+        # Clamp range depends on the currently selected unit. VRMS limits are
+        # waveform-dependent; we use the most permissive (square wave) here and
+        # let the instrument error if the user picks a value the active
+        # waveform can't reach.
+        if self.settings.get("amplitude_unit", "VPP") == "VRMS":
+            value = max(0.001, min(SIGGEN_AMP_MAX_VRMS, value))
+        else:
+            value = max(SIGGEN_AMP_MIN, min(SIGGEN_AMP_MAX, value))
+        self.settings["amplitude"] = value
+        self._write(f"VOLT {value}")
+
+    def set_amplitude_unit(self, unit: str):
+        if unit not in SIGGEN_AMP_UNITS:
+            self.error_occurred.emit(f"Invalid amplitude unit: {unit!r}. Valid: {SIGGEN_AMP_UNITS}")
+            return
+        self.settings["amplitude_unit"] = unit
+        self._write(f"VOLT:UNIT {unit}")
 
     def set_offset(self, offset_v: float):
         offset_v = max(-SIGGEN_OFFSET_MAX, min(SIGGEN_OFFSET_MAX, offset_v))
@@ -118,7 +135,7 @@ class SignalGenWorker(QObject):
     def set_duty_cycle(self, duty_pct: float):
         duty_pct = max(SIGGEN_DUTY_MIN, min(SIGGEN_DUTY_MAX, duty_pct))
         self.settings["duty_cycle"] = duty_pct
-        self._write(f"FUNC:SQU:DCYC {duty_pct}")
+        self._write(f"PULS:DCYC {duty_pct}")
 
     def set_gpib_address(self, address: int):
         """Update stored GPIB address. Takes effect on the next connect_device() call."""

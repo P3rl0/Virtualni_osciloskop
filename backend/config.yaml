@@ -14,14 +14,14 @@ daq_settings:
     probe_attenuation: 1.0
     coupling: DC
     volts_per_div: 2.0
-    vertical_offset: 0.0999999999999901
+    vertical_offset: 0.10000000000000003
   - enable: false
     name: Dev2/ai2
     terminal_config: RSE
     probe_attenuation: 1.0
     coupling: DC
-    volts_per_div: 0.1
-    vertical_offset: 0.0
+    volts_per_div: 0.0002
+    vertical_offset: -1.9999999999999995e-05
   - enable: false
     name: Dev2/ai3
     terminal_config: RSE
@@ -30,7 +30,7 @@ daq_settings:
     volts_per_div: 0.1
     vertical_offset: 0.0
 processor_settings:
-  trigger_type: normal
+  trigger_type: auto
   trigger_level: -2.9700000000000113
   trigger_offset: -0.4260000000000003
   trigger_slope: rising
@@ -78,4 +78,4 @@ signal_gen_settings:
   duty_cycle: 50.0
   output_enabled: false
 app_settings:
-  save_on_exit: true
+  save_on_exit: false

@@ -1,3 +1,5 @@
+import math
+
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (
     QGroupBox, QGridLayout, QHBoxLayout, QVBoxLayout,
@@ -120,11 +122,36 @@ class TriggerPanel(QGroupBox):
                   self._mode_combo, self._offset_spin):
             w.blockSignals(False)
 
+        self.update_step_sizes()
+
     # ── Slots ─────────────────────────────────────────────────────────────
 
     def _on_source(self, index):
         self._daq.trigger.set_trigger_channel(index)
+        self.update_step_sizes()
         self.trigger_settings_changed.emit()
+
+    def update_step_sizes(self):
+        """Recompute Offset/Level step from current timebase and trigger-source V/div."""
+        timebase = self._daq.timebase
+        src_idx = self._daq.trigger.settings["trigger_channel"]
+        vdiv = self._daq.channels[src_idx]["volts_per_div"]
+
+        off_step = timebase * 0.1
+        off_decimals = max(3, -int(math.floor(math.log10(off_step))) + 1)
+        self._offset_spin.blockSignals(True)
+        self._offset_spin.setDecimals(off_decimals)
+        self._offset_spin.setSingleStep(off_step)
+        self._offset_spin.setValue(self._daq.trigger.settings["trigger_offset"])
+        self._offset_spin.blockSignals(False)
+
+        lvl_step = vdiv * 0.1
+        lvl_decimals = max(3, -int(math.floor(math.log10(lvl_step))) + 1)
+        self._level_spin.blockSignals(True)
+        self._level_spin.setDecimals(lvl_decimals)
+        self._level_spin.setSingleStep(lvl_step)
+        self._level_spin.setValue(self._daq.trigger.settings["trigger_level"])
+        self._level_spin.blockSignals(False)
 
     def _on_slope(self, checked):
         falling = checked
